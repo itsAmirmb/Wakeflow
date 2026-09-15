@@ -1,20 +1,23 @@
 import 'package:flutter/material.dart';
+import '../services/day_mode_calculator.dart';
+import 'day_mode_screen.dart';
 
 class WakeScreen extends StatelessWidget {
   const WakeScreen({super.key});
 
   void _onYes(BuildContext context) {
     final wakeTime = DateTime.now();
-    // Day Mode determination comes in Phase 3.
-    // For now, just confirm the wake time was captured.
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Wake time recorded: ${wakeTime.hour}:${wakeTime.minute.toString().padLeft(2, '0')}')),
+    final mode = DayModeCalculator.calculate(wakeTime);
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DayModeScreen(dayMode: mode, wakeTime: wakeTime),
+      ),
     );
   }
 
   void _onLater(BuildContext context) {
-    // Notification rescheduling comes in Phase 10.
-    // For now, just acknowledge the tap.
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Reminder set for 30 minutes later')),
     );
@@ -30,10 +33,7 @@ class WakeScreen extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text(
-                'بیدار شدی؟',
-                style: TextStyle(fontSize: 28),
-              ),
+              const Text('بیدار شدی؟', style: TextStyle(fontSize: 28)),
               const SizedBox(height: 40),
               ElevatedButton(
                 onPressed: () => _onYes(context),
