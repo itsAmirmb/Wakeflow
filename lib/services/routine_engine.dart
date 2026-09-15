@@ -148,4 +148,49 @@ class RoutineEngine {
 
     return placed;
   }
+    /// Recalculates only the future (pending) portion of the day.
+  /// Completed, skipped, cancelled, active, and paused blocks are
+  /// left untouched, per the Past=Immutable / Future=Recalculate rule.
+  static List<Block> recalculateFromCheckpoint({
+    required List<Block> currentBlocks,
+    required List<Category> categories,
+    required DateTime now,
+    required DateTime dayEnd,
+    required int bufferMinutes,
+  }) {
+    final untouched = currentBlocks
+        .where((b) => b.status != BlockStatus.pending)
+        .toList();
+
+    final remainingMinutes = dayEnd.difference(now).inMinutes;
+    final usableMinutes = calculateUsableMinutes(
+      totalMinutes: remainingMinutes,
+      fixedEventMinutes: 0, // no fixed events wired in yet
+      bufferMinutes: bufferMinutes,
+    );
+
+    final allocation = allocateTime(
+      categories: categories,
+      usableMinutes: usableMinutes,
+    );
+
+    final newFutureBlocks = splitIntoBlocks(
+      categories: categories,
+      allocation: allocation,
+    );
+
+    // Timeline continues from wherever the untouched blocks leave off,
+    // or from `now` if there are none.
+    final startTime = untouched.isNotEmpty
+        ? (untouched.last.plannedEnd ?? now)
+        : now;
+
+    final placedFuture = placeOnTimeline(
+      blocks: newFutureBlocks,
+      startTime: startTime,
+      bufferMinutes: bufferMinutes,
+    );
+
+    return [...untouched, ...placedFuture];
+  }
 }

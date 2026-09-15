@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/day_mode.dart';
 import '../models/block.dart';
+import '../data/default_categories.dart';
+import '../services/routine_engine.dart';
 
 class TodayScreen extends StatefulWidget {
   final DayMode dayMode;
@@ -105,6 +107,27 @@ class _TodayScreenState extends State<TodayScreen> {
     });
   }
 
+  void _runCheckpoint() {
+    final now = DateTime.now();
+    final dayEnd = DateTime(now.year, now.month, now.day + 1);
+
+    final recalculated = RoutineEngine.recalculateFromCheckpoint(
+      currentBlocks: _blocks,
+      categories: defaultCategories,
+      now: now,
+      dayEnd: dayEnd,
+      bufferMinutes: 10,
+    );
+
+    setState(() {
+      _blocks = recalculated;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Checkpoint: future routine recalculated')),
+    );
+  }
+
   String _formatTime(DateTime? time) {
     if (time == null) return '--:--';
     return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
@@ -122,7 +145,16 @@ class _TodayScreenState extends State<TodayScreen> {
     final currentBlock = currentIndex == -1 ? null : _blocks[currentIndex];
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Today')),
+      appBar: AppBar(
+        title: const Text('Today'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Checkpoint / Recalculate',
+            onPressed: _runCheckpoint,
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(
