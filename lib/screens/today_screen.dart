@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/day_mode.dart';
 import '../models/block.dart';
@@ -14,6 +15,8 @@ class TodayScreen extends StatefulWidget {
 
 class _TodayScreenState extends State<TodayScreen> {
   late List<Block> _blocks;
+  Timer? _timer;
+  Duration _elapsed = Duration.zero;
 
   @override
   void initState() {
@@ -21,37 +24,96 @@ class _TodayScreenState extends State<TodayScreen> {
     _blocks = widget.blocks;
   }
 
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
   int get _currentIndex => _blocks.indexWhere(
-        (b) => b.status == BlockStatus.pending || b.status == BlockStatus.active,
+        (b) =>
+            b.status == BlockStatus.pending ||
+            b.status == BlockStatus.active ||
+            b.status == BlockStatus.paused,
       );
+
+  void _startTicking() {
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      setState(() => _elapsed += const Duration(seconds: 1));
+    });
+  }
+
+  void _stopTicking() {
+    _timer?.cancel();
+  }
 
   void _startCurrent() {
     final index = _currentIndex;
     if (index == -1) return;
     setState(() {
+      _elapsed = Duration.zero;
+      _blocks[index] = _blocks[index].copyWith(
+        status: BlockStatus.active,
+        actualStart: DateTime.now(),
+      );
+    });
+    _startTicking();
+  }
+
+  void _pauseCurrent() {
+    final index = _currentIndex;
+    if (index == -1) return;
+    _stopTicking();
+    setState(() {
+      _blocks[index] = _blocks[index].copyWith(status: BlockStatus.paused);
+    });
+  }
+
+  void _resumeCurrent() {
+    final index = _currentIndex;
+    if (index == -1) return;
+    setState(() {
       _blocks[index] = _blocks[index].copyWith(status: BlockStatus.active);
     });
+    _startTicking();
   }
 
   void _completeCurrent() {
     final index = _currentIndex;
     if (index == -1) return;
+    _stopTicking();
     setState(() {
-      _blocks[index] = _blocks[index].copyWith(status: BlockStatus.completed);
+      _blocks[index] = _blocks[index].copyWith(
+        status: BlockStatus.completed,
+        actualEnd: DateTime.now(),
+      );
+      _elapsed = Duration.zero;
     });
   }
 
   void _skipCurrent() {
     final index = _currentIndex;
     if (index == -1) return;
+    _stopTicking();
     setState(() {
-      _blocks[index] = _blocks[index].copyWith(status: BlockStatus.skipped);
+      _blocks[index] = _blocks[index].copyWith(
+        status: BlockStatus.skipped,
+        actualEnd: DateTime.now(),
+      );
+      _elapsed = Duration.zero;
     });
   }
 
   String _formatTime(DateTime? time) {
     if (time == null) return '--:--';
     return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+  }
+
+  String _formatElapsed(Duration d) {
+    final minutes = d.inMinutes.toString().padLeft(2, '0');
+    final seconds = (d.inSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
   }
 
   @override
@@ -96,6 +158,14 @@ class _TodayScreenState extends State<TodayScreen> {
                 children: [
                   Text('Current: ${currentBlock.title}',
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  if (currentBlock.status == BlockStatus.active ||
+                      currentBlock.status == BlockStatus.paused) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      _formatElapsed(_elapsed),
+                      style: const TextStyle(fontSize: 28, fontFeatures: [FontFeature.tabularFigures()]),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   Row(
                     children: [
@@ -108,6 +178,13 @@ class _TodayScreenState extends State<TodayScreen> {
                         ),
                       if (currentBlock.status == BlockStatus.active) ...[
                         Expanded(
+                          child: OutlinedButton(
+                            onPressed: _pauseCurrent,
+                            child: const Text('PAUSE'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
                           child: ElevatedButton(
                             onPressed: _completeCurrent,
                             child: const Text('COMPLETE'),
@@ -118,6 +195,21 @@ class _TodayScreenState extends State<TodayScreen> {
                           child: OutlinedButton(
                             onPressed: _skipCurrent,
                             child: const Text('SKIP'),
+                          ),
+                        ),
+                      ],
+                      if (currentBlock.status == BlockStatus.paused) ...[
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: _resumeCurrent,
+                            child: const Text('RESUME'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: _completeCurrent,
+                            child: const Text('COMPLETE'),
                           ),
                         ),
                       ],

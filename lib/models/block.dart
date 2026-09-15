@@ -7,6 +7,8 @@ class Block {
   final int plannedDurationMinutes;
   final DateTime? plannedStart;
   final DateTime? plannedEnd;
+  final DateTime? actualStart;
+  final DateTime? actualEnd;
   final BlockStatus status;
 
   const Block({
@@ -16,12 +18,16 @@ class Block {
     required this.plannedDurationMinutes,
     this.plannedStart,
     this.plannedEnd,
+    this.actualStart,
+    this.actualEnd,
     this.status = BlockStatus.pending,
   });
 
   Block copyWith({
     DateTime? plannedStart,
     DateTime? plannedEnd,
+    DateTime? actualStart,
+    DateTime? actualEnd,
     BlockStatus? status,
   }) {
     return Block(
@@ -31,6 +37,8 @@ class Block {
       plannedDurationMinutes: plannedDurationMinutes,
       plannedStart: plannedStart ?? this.plannedStart,
       plannedEnd: plannedEnd ?? this.plannedEnd,
+      actualStart: actualStart ?? this.actualStart,
+      actualEnd: actualEnd ?? this.actualEnd,
       status: status ?? this.status,
     );
   }
