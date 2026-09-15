@@ -19,7 +19,11 @@ class Block {
     this.status = BlockStatus.pending,
   });
 
-  Block copyWith({DateTime? plannedStart, DateTime? plannedEnd}) {
+  Block copyWith({
+    DateTime? plannedStart,
+    DateTime? plannedEnd,
+    BlockStatus? status,
+  }) {
     return Block(
       id: id,
       categoryId: categoryId,
@@ -27,7 +31,7 @@ class Block {
       plannedDurationMinutes: plannedDurationMinutes,
       plannedStart: plannedStart ?? this.plannedStart,
       plannedEnd: plannedEnd ?? this.plannedEnd,
-      status: status,
+      status: status ?? this.status,
     );
   }
 
