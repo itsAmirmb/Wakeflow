@@ -129,4 +129,23 @@ class RoutineEngine {
 
     return blocks;
   }
+    /// Step 9: place blocks on the timeline starting from [startTime],
+  /// inserting [bufferMinutes] of gap between consecutive blocks.
+  static List<Block> placeOnTimeline({
+    required List<Block> blocks,
+    required DateTime startTime,
+    required int bufferMinutes,
+  }) {
+    final List<Block> placed = [];
+    var cursor = startTime;
+
+    for (final block in blocks) {
+      final start = cursor;
+      final end = start.add(Duration(minutes: block.plannedDurationMinutes));
+      placed.add(block.copyWith(plannedStart: start, plannedEnd: end));
+      cursor = end.add(Duration(minutes: bufferMinutes));
+    }
+
+    return placed;
+  }
 }
