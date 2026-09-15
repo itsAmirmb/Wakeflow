@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'wake_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -18,16 +19,13 @@ class HomeScreen extends StatelessWidget {
             const SizedBox(height: 32),
             ElevatedButton(
               onPressed: () {
-                // Wake Check flow comes in Phase 2 — placeholder for now
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Start Day pressed')),
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const WakeScreen()),
                 );
               },
               style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 32,
-                  vertical: 16,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
               ),
               child: const Text('Start Day', style: TextStyle(fontSize: 18)),
             ),
