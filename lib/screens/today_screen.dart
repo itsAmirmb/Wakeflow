@@ -27,12 +27,17 @@ class TodayScreen extends StatefulWidget {
 class _TodayScreenState extends State<TodayScreen> {
   late List<Block> _blocks;
   Timer? _timer;
-  Duration _elapsed = Duration.zero;
 
   @override
   void initState() {
     super.initState();
     _blocks = widget.blocks;
+    // If a block was already running when the app was closed, resume
+    // ticking so the on-screen timer keeps advancing.
+    final current = _currentBlock;
+    if (current != null && current.status == BlockStatus.active) {
+      _startTicking();
+    }
   }
 
   @override
@@ -48,6 +53,11 @@ class _TodayScreenState extends State<TodayScreen> {
             b.status == BlockStatus.paused,
       );
 
+  Block? get _currentBlock {
+    final index = _currentIndex;
+    return index == -1 ? null : _blocks[index];
+  }
+
   /// Writes a single block's current state to the DB. Called after
   /// every status change so progress survives closing the app.
   Future<void> _persist(Block block) {
@@ -56,8 +66,13 @@ class _TodayScreenState extends State<TodayScreen> {
 
   void _startTicking() {
     _timer?.cancel();
+    // The timer only drives a repaint every second — the actual
+    // elapsed value always comes from Block.elapsedAt(now), which is
+    // derived from accumulatedSeconds + runningSince, not from this
+    // counter. So even if ticking is interrupted (app backgrounded),
+    // the displayed time is correct the moment it resumes.
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      setState(() => _elapsed += const Duration(seconds: 1));
+      setState(() {});
     });
   }
 
@@ -71,9 +86,10 @@ class _TodayScreenState extends State<TodayScreen> {
     final updated = _blocks[index].copyWith(
       status: BlockStatus.active,
       actualStart: DateTime.now(),
+      accumulatedSeconds: 0,
+      runningSince: DateTime.now(),
     );
     setState(() {
-      _elapsed = Duration.zero;
       _blocks[index] = updated;
     });
     _startTicking();
@@ -84,7 +100,14 @@ class _TodayScreenState extends State<TodayScreen> {
     final index = _currentIndex;
     if (index == -1) return;
     _stopTicking();
-    final updated = _blocks[index].copyWith(status: BlockStatus.paused);
+    final block = _blocks[index];
+    // Freeze the running stretch into accumulatedSeconds, then clear
+    // runningSince so elapsedAt() stops adding live time while paused.
+    final updated = block.copyWith(
+      status: BlockStatus.paused,
+      accumulatedSeconds: block.elapsedAt(DateTime.now()).inSeconds,
+      runningSince: null,
+    );
     setState(() {
       _blocks[index] = updated;
     });
@@ -94,7 +117,10 @@ class _TodayScreenState extends State<TodayScreen> {
   void _resumeCurrent() {
     final index = _currentIndex;
     if (index == -1) return;
-    final updated = _blocks[index].copyWith(status: BlockStatus.active);
+    final updated = _blocks[index].copyWith(
+      status: BlockStatus.active,
+      runningSince: DateTime.now(),
+    );
     setState(() {
       _blocks[index] = updated;
     });
@@ -106,13 +132,15 @@ class _TodayScreenState extends State<TodayScreen> {
     final index = _currentIndex;
     if (index == -1) return;
     _stopTicking();
-    final updated = _blocks[index].copyWith(
+    final block = _blocks[index];
+    final updated = block.copyWith(
       status: BlockStatus.completed,
       actualEnd: DateTime.now(),
+      accumulatedSeconds: block.elapsedAt(DateTime.now()).inSeconds,
+      runningSince: null,
     );
     setState(() {
       _blocks[index] = updated;
-      _elapsed = Duration.zero;
     });
     _persist(updated);
   }
@@ -121,13 +149,15 @@ class _TodayScreenState extends State<TodayScreen> {
     final index = _currentIndex;
     if (index == -1) return;
     _stopTicking();
-    final updated = _blocks[index].copyWith(
+    final block = _blocks[index];
+    final updated = block.copyWith(
       status: BlockStatus.skipped,
       actualEnd: DateTime.now(),
+      accumulatedSeconds: block.elapsedAt(DateTime.now()).inSeconds,
+      runningSince: null,
     );
     setState(() {
       _blocks[index] = updated;
-      _elapsed = Duration.zero;
     });
     _persist(updated);
   }
@@ -224,7 +254,7 @@ class _TodayScreenState extends State<TodayScreen> {
                       currentBlock.status == BlockStatus.paused) ...[
                     const SizedBox(height: 4),
                     Text(
-                      _formatElapsed(_elapsed),
+                      _formatElapsed(currentBlock.elapsedAt(DateTime.now())),
                       style: const TextStyle(fontSize: 28, fontFeatures: [FontFeature.tabularFigures()]),
                     ),
                   ],

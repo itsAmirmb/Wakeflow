@@ -31,7 +31,7 @@ class DatabaseService {
 
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE categories (
@@ -58,21 +58,14 @@ class DatabaseService {
             plannedEnd TEXT,
             actualStart TEXT,
             actualEnd TEXT,
-            status TEXT NOT NULL
+            status TEXT NOT NULL,
+            accumulatedSeconds INTEGER NOT NULL DEFAULT 0,
+            runningSince TEXT
           )
         ''');
         await db.execute('CREATE INDEX idx_blocks_day ON blocks(day)');
 
-        // One row per day: the day-mode and wake time a routine was
-        // generated with. Needed to resume "today" on app restart
-        // without re-asking the user to wake up.
-        await db.execute('''
-          CREATE TABLE day_meta (
-            day TEXT PRIMARY KEY,
-            dayMode TEXT NOT NULL,
-            wakeTime TEXT NOT NULL
-          )
-        ''');
+        await _createDayMetaTable(db);
 
         // Seed categories on first run so the app always has something
         // to allocate time against.
@@ -82,7 +75,28 @@ class DatabaseService {
         }
         await batch.commit(noResult: true);
       },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        // v1 -> v2: added day_meta (needed to resume today's routine
+        // after the app is killed). Older installs already have
+        // categories/blocks from v1, so only add what's missing.
+        if (oldVersion < 2) {
+          await _createDayMetaTable(db);
+        }
+      },
     );
+  }
+
+  Future<void> _createDayMetaTable(Database db) async {
+    // One row per day: the day-mode and wake time a routine was
+    // generated with. Needed to resume "today" on app restart
+    // without re-asking the user to wake up.
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS day_meta (
+        day TEXT PRIMARY KEY,
+        dayMode TEXT NOT NULL,
+        wakeTime TEXT NOT NULL
+      )
+    ''');
   }
 
   // ---------- Categories ----------
