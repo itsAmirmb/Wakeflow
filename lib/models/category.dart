@@ -20,4 +20,58 @@ class Category {
     this.priority = 0,
     this.enabled = true,
   });
+
+  Category copyWith({
+    String? name,
+    String? icon,
+    double? percentage,
+    int? minimumMinutes,
+    int? preferredBlockMinMinutes,
+    int? preferredBlockMaxMinutes,
+    int? priority,
+    bool? enabled,
+  }) {
+    return Category(
+      id: id,
+      name: name ?? this.name,
+      icon: icon ?? this.icon,
+      percentage: percentage ?? this.percentage,
+      minimumMinutes: minimumMinutes ?? this.minimumMinutes,
+      preferredBlockMinMinutes:
+          preferredBlockMinMinutes ?? this.preferredBlockMinMinutes,
+      preferredBlockMaxMinutes:
+          preferredBlockMaxMinutes ?? this.preferredBlockMaxMinutes,
+      priority: priority ?? this.priority,
+      enabled: enabled ?? this.enabled,
+    );
+  }
+
+  // SQLite stores bool as 0/1, so enabled is converted explicitly.
+  Map<String, Object?> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'icon': icon,
+      'percentage': percentage,
+      'minimumMinutes': minimumMinutes,
+      'preferredBlockMinMinutes': preferredBlockMinMinutes,
+      'preferredBlockMaxMinutes': preferredBlockMaxMinutes,
+      'priority': priority,
+      'enabled': enabled ? 1 : 0,
+    };
+  }
+
+  factory Category.fromMap(Map<String, Object?> map) {
+    return Category(
+      id: map['id'] as String,
+      name: map['name'] as String,
+      icon: map['icon'] as String,
+      percentage: map['percentage'] as double,
+      minimumMinutes: map['minimumMinutes'] as int,
+      preferredBlockMinMinutes: map['preferredBlockMinMinutes'] as int,
+      preferredBlockMaxMinutes: map['preferredBlockMaxMinutes'] as int,
+      priority: map['priority'] as int,
+      enabled: (map['enabled'] as int) == 1,
+    );
+  }
 }

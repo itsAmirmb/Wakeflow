@@ -2,14 +2,23 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/day_mode.dart';
 import '../models/block.dart';
-import '../data/default_categories.dart';
+import '../models/category.dart';
 import '../services/routine_engine.dart';
+import '../services/database_service.dart';
 
 class TodayScreen extends StatefulWidget {
   final DayMode dayMode;
   final List<Block> blocks;
+  final String day; // yyyy-MM-dd this routine belongs to
+  final List<Category> categories;
 
-  const TodayScreen({super.key, required this.dayMode, required this.blocks});
+  const TodayScreen({
+    super.key,
+    required this.dayMode,
+    required this.blocks,
+    required this.day,
+    required this.categories,
+  });
 
   @override
   State<TodayScreen> createState() => _TodayScreenState();
@@ -39,6 +48,12 @@ class _TodayScreenState extends State<TodayScreen> {
             b.status == BlockStatus.paused,
       );
 
+  /// Writes a single block's current state to the DB. Called after
+  /// every status change so progress survives closing the app.
+  Future<void> _persist(Block block) {
+    return DatabaseService.instance.updateBlock(widget.day, block);
+  }
+
   void _startTicking() {
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -53,67 +68,77 @@ class _TodayScreenState extends State<TodayScreen> {
   void _startCurrent() {
     final index = _currentIndex;
     if (index == -1) return;
+    final updated = _blocks[index].copyWith(
+      status: BlockStatus.active,
+      actualStart: DateTime.now(),
+    );
     setState(() {
       _elapsed = Duration.zero;
-      _blocks[index] = _blocks[index].copyWith(
-        status: BlockStatus.active,
-        actualStart: DateTime.now(),
-      );
+      _blocks[index] = updated;
     });
     _startTicking();
+    _persist(updated);
   }
 
   void _pauseCurrent() {
     final index = _currentIndex;
     if (index == -1) return;
     _stopTicking();
+    final updated = _blocks[index].copyWith(status: BlockStatus.paused);
     setState(() {
-      _blocks[index] = _blocks[index].copyWith(status: BlockStatus.paused);
+      _blocks[index] = updated;
     });
+    _persist(updated);
   }
 
   void _resumeCurrent() {
     final index = _currentIndex;
     if (index == -1) return;
+    final updated = _blocks[index].copyWith(status: BlockStatus.active);
     setState(() {
-      _blocks[index] = _blocks[index].copyWith(status: BlockStatus.active);
+      _blocks[index] = updated;
     });
     _startTicking();
+    _persist(updated);
   }
 
   void _completeCurrent() {
     final index = _currentIndex;
     if (index == -1) return;
     _stopTicking();
+    final updated = _blocks[index].copyWith(
+      status: BlockStatus.completed,
+      actualEnd: DateTime.now(),
+    );
     setState(() {
-      _blocks[index] = _blocks[index].copyWith(
-        status: BlockStatus.completed,
-        actualEnd: DateTime.now(),
-      );
+      _blocks[index] = updated;
       _elapsed = Duration.zero;
     });
+    _persist(updated);
   }
 
   void _skipCurrent() {
     final index = _currentIndex;
     if (index == -1) return;
     _stopTicking();
+    final updated = _blocks[index].copyWith(
+      status: BlockStatus.skipped,
+      actualEnd: DateTime.now(),
+    );
     setState(() {
-      _blocks[index] = _blocks[index].copyWith(
-        status: BlockStatus.skipped,
-        actualEnd: DateTime.now(),
-      );
+      _blocks[index] = updated;
       _elapsed = Duration.zero;
     });
+    _persist(updated);
   }
 
-  void _runCheckpoint() {
+  Future<void> _runCheckpoint() async {
     final now = DateTime.now();
     final dayEnd = DateTime(now.year, now.month, now.day + 1);
 
     final recalculated = RoutineEngine.recalculateFromCheckpoint(
       currentBlocks: _blocks,
-      categories: defaultCategories,
+      categories: widget.categories,
       now: now,
       dayEnd: dayEnd,
       bufferMinutes: 10,
@@ -123,6 +148,11 @@ class _TodayScreenState extends State<TodayScreen> {
       _blocks = recalculated;
     });
 
+    // Checkpoint rewrites the whole future portion, so it's simplest
+    // to replace the day's rows wholesale rather than diff them.
+    await DatabaseService.instance.saveBlocksForDay(widget.day, recalculated);
+
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Checkpoint: future routine recalculated')),
     );

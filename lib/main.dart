@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'screens/home_screen.dart';
 
 void main() {
+  // Required before any plugin (sqflite included) is used prior to runApp.
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const WakeFlowApp());
 }
 

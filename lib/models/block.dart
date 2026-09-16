@@ -46,4 +46,44 @@ class Block {
   @override
   String toString() =>
       'Block($title, ${plannedDurationMinutes}m, $status, start=$plannedStart)';
+
+  // `day` is not a Block field (it's the routine's day, tracked separately
+  // by the caller) — it's passed in here only because it lives in the same
+  // DB row, so the storage layer needs it alongside the block's own fields.
+  Map<String, Object?> toMap({required String day}) {
+    return {
+      'id': id,
+      'day': day,
+      'categoryId': categoryId,
+      'title': title,
+      'plannedDurationMinutes': plannedDurationMinutes,
+      'plannedStart': plannedStart?.toIso8601String(),
+      'plannedEnd': plannedEnd?.toIso8601String(),
+      'actualStart': actualStart?.toIso8601String(),
+      'actualEnd': actualEnd?.toIso8601String(),
+      'status': status.name,
+    };
+  }
+
+  factory Block.fromMap(Map<String, Object?> map) {
+    return Block(
+      id: map['id'] as String,
+      categoryId: map['categoryId'] as String,
+      title: map['title'] as String,
+      plannedDurationMinutes: map['plannedDurationMinutes'] as int,
+      plannedStart: map['plannedStart'] == null
+          ? null
+          : DateTime.parse(map['plannedStart'] as String),
+      plannedEnd: map['plannedEnd'] == null
+          ? null
+          : DateTime.parse(map['plannedEnd'] as String),
+      actualStart: map['actualStart'] == null
+          ? null
+          : DateTime.parse(map['actualStart'] as String),
+      actualEnd: map['actualEnd'] == null
+          ? null
+          : DateTime.parse(map['actualEnd'] as String),
+      status: BlockStatus.values.byName(map['status'] as String),
+    );
+  }
 }

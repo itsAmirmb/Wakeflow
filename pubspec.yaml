@@ -35,6 +35,11 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
+  # SQLite for local persistence (categories, blocks, history)
+  sqflite: ^2.3.3+1
+  # Needed by sqflite to locate the database file on device
+  path: ^1.9.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
