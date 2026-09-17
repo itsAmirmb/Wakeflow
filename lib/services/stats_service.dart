@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import '../models/block.dart';
 import '../models/category.dart';
 import 'database_service.dart';
@@ -6,22 +8,36 @@ import 'day_key.dart';
 /// Per-category totals within some set of blocks (one day, or a week).
 class CategoryStat {
   final Category category;
-  final int completedMinutes;
+
+  /// Exact active seconds across completed blocks. Minutes are derived
+  /// from this aggregate, not per block, so two 59-second blocks count
+  /// as one minute together (instead of rounding each down to zero).
+  final int completedSeconds;
   final int plannedMinutes;
   final int completedBlocks;
   final int skippedBlocks;
 
   const CategoryStat({
     required this.category,
-    required this.completedMinutes,
+    required this.completedSeconds,
     required this.plannedMinutes,
     required this.completedBlocks,
     required this.skippedBlocks,
   });
 
+  int get completedMinutes => completedSeconds ~/ 60;
+
   /// completedMinutes / plannedMinutes, 0 when nothing was planned.
   double get completionRatio =>
       plannedMinutes == 0 ? 0 : completedMinutes / plannedMinutes;
+
+  CategoryStat operator +(CategoryStat other) => CategoryStat(
+    category: category,
+    completedSeconds: completedSeconds + other.completedSeconds,
+    plannedMinutes: plannedMinutes + other.plannedMinutes,
+    completedBlocks: completedBlocks + other.completedBlocks,
+    skippedBlocks: skippedBlocks + other.skippedBlocks,
+  );
 }
 
 class DailyStats {
@@ -39,7 +55,8 @@ class DailyStats {
   int get skippedBlocks =>
       categoryStats.fold(0, (sum, c) => sum + c.skippedBlocks);
 
-  bool get isEmpty => plannedMinutes == 0 && completedBlocks == 0 && skippedBlocks == 0;
+  bool get isEmpty =>
+      plannedMinutes == 0 && completedBlocks == 0 && skippedBlocks == 0;
 }
 
 class WeeklyStats {
@@ -67,7 +84,7 @@ class StatsService {
   Future<DailyStats> getDailyStats(String day) async {
     final blocks = await DatabaseService.instance.getBlocksForDay(day);
     final categories = await DatabaseService.instance.getCategories();
-    return _buildDailyStats(day, blocks, categories);
+    return buildDailyStats(day, blocks, categories);
   }
 
   /// Last 7 days including [today] (yyyy-MM-dd), oldest first.
@@ -80,7 +97,7 @@ class StatsService {
       final date = now.subtract(Duration(days: i));
       final key = dayKey(date);
       final blocks = await DatabaseService.instance.getBlocksForDay(key);
-      days.add(_buildDailyStats(key, blocks, categories));
+      days.add(buildDailyStats(key, blocks, categories));
     }
 
     // Sum per-category stats across all 7 days.
@@ -88,42 +105,40 @@ class StatsService {
     for (final day in days) {
       for (final stat in day.categoryStats) {
         final existing = byCategory[stat.category.id];
-        byCategory[stat.category.id] = CategoryStat(
-          category: stat.category,
-          completedMinutes:
-              (existing?.completedMinutes ?? 0) + stat.completedMinutes,
-          plannedMinutes: (existing?.plannedMinutes ?? 0) + stat.plannedMinutes,
-          completedBlocks:
-              (existing?.completedBlocks ?? 0) + stat.completedBlocks,
-          skippedBlocks: (existing?.skippedBlocks ?? 0) + stat.skippedBlocks,
-        );
+        byCategory[stat.category.id] = existing == null
+            ? stat
+            : existing + stat;
       }
     }
 
     final weekCategoryStats = categories
-        .map((c) => byCategory[c.id] ??
-            CategoryStat(
-              category: c,
-              completedMinutes: 0,
-              plannedMinutes: 0,
-              completedBlocks: 0,
-              skippedBlocks: 0,
-            ))
+        .map(
+          (c) =>
+              byCategory[c.id] ??
+              CategoryStat(
+                category: c,
+                completedSeconds: 0,
+                plannedMinutes: 0,
+                completedBlocks: 0,
+                skippedBlocks: 0,
+              ),
+        )
         .toList();
 
     return WeeklyStats(days: days, categoryStats: weekCategoryStats);
   }
 
-  DailyStats _buildDailyStats(
+  DailyStats buildDailyStats(
     String day,
     List<Block> blocks,
     List<Category> categories,
   ) {
     final stats = categories.map((category) {
-      final categoryBlocks =
-          blocks.where((b) => b.categoryId == category.id).toList();
+      final categoryBlocks = blocks
+          .where((b) => b.categoryId == category.id)
+          .toList();
 
-      int completedMinutes = 0;
+      int completedSeconds = 0;
       int plannedMinutes = 0;
       int completedBlocks = 0;
       int skippedBlocks = 0;
@@ -137,10 +152,17 @@ class StatsService {
         }
         if (block.status == BlockStatus.completed) {
           completedBlocks++;
-          // Actual time spent, not planned — reflects real effort even
-          // if the block ran short or long.
-          final actualMinutes = block.elapsedAt(DateTime.now()).inMinutes;
-          completedMinutes += actualMinutes;
+          // Exact active seconds (timer data takes precedence over legacy
+          // timestamps), aggregated before any minute truncation.
+          completedSeconds += math.max(0, block.accumulatedSeconds);
+          if (block.accumulatedSeconds == 0 &&
+              block.actualStart != null &&
+              block.actualEnd != null) {
+            completedSeconds += math.max(
+              0,
+              block.actualEnd!.difference(block.actualStart!).inSeconds,
+            );
+          }
         } else if (block.status == BlockStatus.skipped) {
           skippedBlocks++;
         }
@@ -148,7 +170,7 @@ class StatsService {
 
       return CategoryStat(
         category: category,
-        completedMinutes: completedMinutes,
+        completedSeconds: completedSeconds,
         plannedMinutes: plannedMinutes,
         completedBlocks: completedBlocks,
         skippedBlocks: skippedBlocks,
