@@ -5,22 +5,26 @@ class AppSettings {
   final int bufferMinutes;
   final int wakeReminderHour;
   final int wakeReminderMinute;
+  final String themeMode; // 'system' | 'light' | 'dark'
 
   const AppSettings({
     this.bufferMinutes = 10,
     this.wakeReminderHour = 8,
     this.wakeReminderMinute = 0,
+    this.themeMode = 'system',
   });
 
   AppSettings copyWith({
     int? bufferMinutes,
     int? wakeReminderHour,
     int? wakeReminderMinute,
+    String? themeMode,
   }) {
     return AppSettings(
       bufferMinutes: bufferMinutes ?? this.bufferMinutes,
       wakeReminderHour: wakeReminderHour ?? this.wakeReminderHour,
       wakeReminderMinute: wakeReminderMinute ?? this.wakeReminderMinute,
+      themeMode: themeMode ?? this.themeMode,
     );
   }
 
@@ -30,6 +34,7 @@ class AppSettings {
       'bufferMinutes': bufferMinutes,
       'wakeReminderHour': wakeReminderHour,
       'wakeReminderMinute': wakeReminderMinute,
+      'themeMode': themeMode,
     };
   }
 
@@ -38,6 +43,9 @@ class AppSettings {
       bufferMinutes: map['bufferMinutes'] as int,
       wakeReminderHour: map['wakeReminderHour'] as int,
       wakeReminderMinute: map['wakeReminderMinute'] as int,
+      // Older rows (pre-theme-setting) won't have this column — default
+      // to following the system setting, same as before this existed.
+      themeMode: map['themeMode'] as String? ?? 'system',
     );
   }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'screens/home_screen.dart';
 import 'services/notification_service.dart';
 import 'services/database_service.dart';
+import 'services/theme_controller.dart';
 
 void main() async {
   // Required before any plugin (sqflite, notifications) is used prior to runApp.
@@ -15,6 +16,7 @@ void main() async {
     hour: settings.wakeReminderHour,
     minute: settings.wakeReminderMinute,
   );
+  ThemeController.instance.setFromStored(settings.themeMode);
 
   runApp(const WakeFlowApp());
 }
@@ -24,12 +26,17 @@ class WakeFlowApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'WakeFlow',
-      theme: _buildTheme(Brightness.light),
-      darkTheme: _buildTheme(Brightness.dark),
-      themeMode: ThemeMode.system,
-      home: const HomeScreen(),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeController.instance.mode,
+      builder: (context, themeMode, _) {
+        return MaterialApp(
+          title: 'WakeFlow',
+          theme: _buildTheme(Brightness.light),
+          darkTheme: _buildTheme(Brightness.dark),
+          themeMode: themeMode,
+          home: const HomeScreen(),
+        );
+      },
     );
   }
 

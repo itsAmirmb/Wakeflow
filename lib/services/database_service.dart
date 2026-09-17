@@ -32,7 +32,7 @@ class DatabaseService {
 
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE categories (
@@ -88,6 +88,18 @@ class DatabaseService {
         if (oldVersion < 3) {
           await _createSettingsTable(db);
         }
+        // v3 -> v4: added themeMode to settings (light/dark/system).
+        if (oldVersion < 4) {
+          // settings table won't exist yet if upgrading straight from
+          // v1/v2 in the same run — _createSettingsTable already
+          // includes themeMode for that case, so only ALTER when the
+          // table was already there.
+          if (oldVersion >= 3) {
+            await db.execute(
+              "ALTER TABLE settings ADD COLUMN themeMode TEXT NOT NULL DEFAULT 'system'",
+            );
+          }
+        }
       },
     );
   }
@@ -111,7 +123,8 @@ class DatabaseService {
         id INTEGER PRIMARY KEY,
         bufferMinutes INTEGER NOT NULL,
         wakeReminderHour INTEGER NOT NULL,
-        wakeReminderMinute INTEGER NOT NULL
+        wakeReminderMinute INTEGER NOT NULL,
+        themeMode TEXT NOT NULL DEFAULT 'system'
       )
     ''');
   }

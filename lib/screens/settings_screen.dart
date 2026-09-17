@@ -3,6 +3,7 @@ import '../models/category.dart';
 import '../models/app_settings.dart';
 import '../services/database_service.dart';
 import '../services/notification_service.dart';
+import '../services/theme_controller.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -42,6 +43,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _settings = settings);
   }
 
+  Future<void> _setThemeMode(ThemeMode mode) async {
+    final stored = ThemeController.toStored(mode);
+    ThemeController.instance.mode.value = mode; // instant, no restart
+    await _saveSettings(_settings.copyWith(themeMode: stored));
+  }
+
   Future<void> _saveCategory(Category category) async {
     await DatabaseService.instance.updateCategory(category);
     setState(() {
@@ -78,6 +85,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const Padding(
           padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
           child: Text('General', style: TextStyle(fontWeight: FontWeight.bold)),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+          child: Row(
+            children: [
+              const Icon(Icons.dark_mode_outlined),
+              const SizedBox(width: 12),
+              const Text('Theme'),
+              const Spacer(),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+          child: SegmentedButton<ThemeMode>(
+            segments: const [
+              ButtonSegment(
+                value: ThemeMode.system,
+                label: Text('System'),
+                icon: Icon(Icons.brightness_auto),
+              ),
+              ButtonSegment(
+                value: ThemeMode.light,
+                label: Text('Light'),
+                icon: Icon(Icons.light_mode),
+              ),
+              ButtonSegment(
+                value: ThemeMode.dark,
+                label: Text('Dark'),
+                icon: Icon(Icons.dark_mode),
+              ),
+            ],
+            selected: {ThemeController.instance.mode.value},
+            onSelectionChanged: (selection) => _setThemeMode(selection.first),
+          ),
         ),
         ListTile(
           leading: const Icon(Icons.notifications_active_outlined),
