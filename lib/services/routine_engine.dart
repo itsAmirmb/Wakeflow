@@ -1,156 +1,258 @@
+import 'dart:math' as math;
+
 import '../models/category.dart';
 import '../models/block.dart';
 
 class RoutineEngine {
-  /// Steps 1-4: usable time = total - fixed events - buffers.
+  // The counter guarantees uniqueness across calls in this isolate; the random
+  // session prefix also avoids reusing persisted IDs after an application restart.
+  static final String _idPrefix =
+      '${DateTime.now().microsecondsSinceEpoch}_${math.Random.secure().nextInt(1 << 32).toRadixString(16)}';
+  static int _nextBlockId = 0;
+
+  /// Subtracts aggregate fixed-event and buffer costs, not a per-block gap.
+  /// Prefer [generateRoutine] when the number of gaps is not known yet.
   static int calculateUsableMinutes({
     required int totalMinutes,
     required int fixedEventMinutes,
     required int bufferMinutes,
-  }) {
-    final usable = totalMinutes - fixedEventMinutes - bufferMinutes;
-    return usable > 0 ? usable : 0;
-  }
+  }) => math.max<int>(
+    0,
+    totalMinutes -
+        math.max<int>(0, fixedEventMinutes) -
+        math.max<int>(0, bufferMinutes),
+  );
 
-  /// Steps 5-7: allocate usable time across enabled categories,
-  /// respecting minimums, with emergency compression if minimums
-  /// exceed available time.
+  /// Allocates exactly the nonnegative budget among enabled categories.
+  /// Positive finite weights are normalized; other weights receive only their
+  /// minimums. If no positive weights exist, surplus is shared equally.
+  /// In emergencies, minimums are compressed proportionally, retaining at least
+  /// one minute per positive-minimum category whenever the budget permits it.
+  /// Input order breaks rounding ties deterministically. IDs must be unique.
   static Map<String, int> allocateTime({
     required List<Category> categories,
     required int usableMinutes,
-  }) {
+  }) => _allocate(categories, math.max(0, usableMinutes), const {});
+
+  static Map<String, int> _allocate(
+    List<Category> categories,
+    int minutes,
+    Map<String, int> credits,
+  ) {
     final enabled = categories.where((c) => c.enabled).toList();
     if (enabled.isEmpty) return {};
-
-    // Step 5: target allocation by percentage.
-    final Map<String, int> targetAllocation = {
-      for (final c in enabled) c.id: (usableMinutes * c.percentage).round(),
-    };
-
-    // Step 6: apply minimums — never allocate less than minimum
-    // as long as we're not yet in emergency compression.
-    final totalMinimums =
-        enabled.fold<int>(0, (sum, c) => sum + c.minimumMinutes);
-
-    if (totalMinimums > usableMinutes) {
-      // Step 7: Emergency Compression — scale all minimums down
-      // proportionally so they sum to usableMinutes. No category
-      // is dropped, per spec rule.
-      if (usableMinutes <= 0) {
-        return {for (final c in enabled) c.id: 0};
-      }
-      final scale = usableMinutes / totalMinimums;
+    final credited = [for (final c in enabled) credits[c.id] ?? 0];
+    final minimums = [
+      for (var i = 0; i < enabled.length; i++)
+        math.max(0, enabled[i].minimumMinutes - credited[i]),
+    ];
+    final totalMinimum = minimums.fold<int>(0, (sum, value) => sum + value);
+    if (totalMinimum > minutes) {
+      final positiveCount = minimums.where((value) => value > 0).length;
+      final compressed = _apportion(
+        minutes,
+        [for (final minimum in minimums) minimum.toDouble()],
+        [
+          for (final minimum in minimums)
+            minutes >= positiveCount && minimum > 0 ? 1 : 0,
+        ],
+      );
       return {
-        for (final c in enabled)
-          c.id: (c.minimumMinutes * scale).floor(),
+        for (var i = 0; i < enabled.length; i++) enabled[i].id: compressed[i],
       };
     }
 
-    // Normal case: use percentage target, but never below minimum.
-    final Map<String, int> allocation = {
-      for (final c in enabled)
-        c.id: targetAllocation[c.id]! < c.minimumMinutes
-            ? c.minimumMinutes
-            : targetAllocation[c.id]!,
+    // Allocate the whole day's productive time, with already completed/current
+    // work as lower bounds, then return only the as-yet-uncommitted portion.
+    final daily = _apportion(
+      minutes + credited.fold<int>(0, (sum, value) => sum + value),
+      [
+        for (final c in enabled)
+          c.percentage.isFinite && c.percentage > 0 ? c.percentage : 0,
+      ],
+      [for (var i = 0; i < enabled.length; i++) credited[i] + minimums[i]],
+    );
+    return {
+      for (var i = 0; i < enabled.length; i++)
+        enabled[i].id: daily[i] - credited[i],
     };
-
-    // If bumping categories up to their minimums pushed the total
-    // over usableMinutes, scale the excess back down from the
-    // categories that were above minimum (proportionally), so we
-    // never exceed usableMinutes. Categories at their minimum are
-    // protected and not reduced further.
-    final allocatedTotal =
-        allocation.values.fold<int>(0, (sum, m) => sum + m);
-    final overflow = allocatedTotal - usableMinutes;
-
-    if (overflow > 0) {
-      final aboveMinimum = enabled
-          .where((c) => allocation[c.id]! > c.minimumMinutes)
-          .toList();
-      final reducibleTotal = aboveMinimum.fold<int>(
-        0,
-        (sum, c) => sum + (allocation[c.id]! - c.minimumMinutes),
-      );
-
-      if (reducibleTotal > 0) {
-        for (final c in aboveMinimum) {
-          final reducible = allocation[c.id]! - c.minimumMinutes;
-          final share = (reducible / reducibleTotal) * overflow;
-          allocation[c.id] = allocation[c.id]! - share.round();
-        }
-      }
-    }
-
-    return allocation;
   }
 
-  /// Step 8: split each category's total minutes into blocks sized
-  /// within [preferredBlockMinMinutes, preferredBlockMaxMinutes].
+  /// Lower-bound weighted water filling followed by largest-remainder rounding.
+  /// Unlike independently rounded shares, this conserves the integer budget.
+  static List<int> _apportion(
+    int total,
+    List<double> weights,
+    List<int> lowerBounds,
+  ) {
+    final largestWeight = weights.fold<double>(0, math.max);
+    // Scaling first prevents a sum of large finite weights from overflowing.
+    final normalized = [
+      for (final weight in weights)
+        largestWeight > 0 ? weight / largestWeight : 1.0,
+    ];
+    final targets = List<double>.filled(weights.length, 0);
+    final pending = [for (var i = 0; i < weights.length; i++) i];
+    var remaining = total;
+    while (pending.isNotEmpty) {
+      final weightSum = pending.fold<double>(
+        0,
+        (sum, i) => sum + normalized[i],
+      );
+      final fixed = [
+        for (final i in pending)
+          if (normalized[i] == 0 ||
+              remaining * normalized[i] / weightSum < lowerBounds[i])
+            i,
+      ];
+      if (fixed.isEmpty) {
+        for (final i in pending) {
+          targets[i] = remaining * normalized[i] / weightSum;
+        }
+        break;
+      }
+      for (final i in fixed) {
+        targets[i] = lowerBounds[i].toDouble();
+        remaining -= lowerBounds[i];
+        pending.remove(i);
+      }
+    }
+    final result = [for (final target in targets) target.floor()];
+    final order = [for (var i = 0; i < targets.length; i++) i]
+      ..sort((a, b) {
+        final comparison = (targets[b] - result[b]).compareTo(
+          targets[a] - result[a],
+        );
+        return comparison != 0 ? comparison : a.compareTo(b);
+      });
+    final remainder = total - result.fold<int>(0, (sum, value) => sum + value);
+    for (var i = 0; i < remainder; i++) {
+      result[order[i % order.length]]++;
+    }
+    return result;
+  }
+
+  /// Uses the fewest blocks permitted by the positive maximum, distributing
+  /// minutes evenly instead of leaving a tiny tail. If any split can satisfy
+  /// both preferred bounds, this split does. If not, the maximum is retained
+  /// and shorter blocks are unavoidable. Nonpositive maxima are treated as 1.
   static List<Block> splitIntoBlocks({
     required List<Category> categories,
     required Map<String, int> allocation,
-  }) {
-    final List<Block> blocks = [];
-    int blockCounter = 0;
+  }) => _split(categories, allocation, const {});
 
-    for (final category in categories) {
-      var remaining = allocation[category.id] ?? 0;
-      if (remaining <= 0) continue;
+  static int _blockCount(Category category, int minutes) {
+    final maximum = math.max(1, category.preferredBlockMaxMinutes);
+    return (minutes + maximum - 1) ~/ maximum;
+  }
 
-      // If total time is less than one minimum-size block, make a
-      // single short block rather than producing zero blocks.
-      if (remaining < category.preferredBlockMinMinutes) {
-        blocks.add(Block(
-          id: 'block_${blockCounter++}',
-          categoryId: category.id,
-          title: category.name,
-          plannedDurationMinutes: remaining,
-        ));
-        continue;
-      }
-
-      while (remaining > 0) {
-        int blockSize;
-        if (remaining <= category.preferredBlockMaxMinutes) {
-          // Last chunk fits in one block.
-          blockSize = remaining;
-        } else {
-          blockSize = category.preferredBlockMaxMinutes;
-        }
-        blocks.add(Block(
-          id: 'block_${blockCounter++}',
-          categoryId: category.id,
-          title: category.name,
-          plannedDurationMinutes: blockSize,
-        ));
-        remaining -= blockSize;
+  static List<Block> _split(
+    List<Category> categories,
+    Map<String, int> allocation,
+    Set<String> excludedIds,
+  ) {
+    final blocks = <Block>[];
+    for (final category in categories.where((c) => c.enabled)) {
+      final minutes = allocation[category.id] ?? 0;
+      if (minutes <= 0) continue;
+      final count = _blockCount(category, minutes);
+      for (var i = 0; i < count; i++) {
+        String id;
+        do {
+          id = 'block_${_idPrefix}_${_nextBlockId++}';
+        } while (excludedIds.contains(id));
+        blocks.add(
+          Block(
+            id: id,
+            categoryId: category.id,
+            title: category.name,
+            plannedDurationMinutes:
+                minutes ~/ count + (i < minutes % count ? 1 : 0),
+          ),
+        );
       }
     }
-
     return blocks;
   }
-    /// Step 9: place blocks on the timeline starting from [startTime],
-  /// inserting [bufferMinutes] of gap between consecutive blocks.
+
+  /// Places already-budgeted blocks, with a nonnegative gap between them.
+  /// This low-level compatibility API has no deadline; use [generateRoutine]
+  /// for deadline-safe allocation, splitting, and placement in one operation.
   static List<Block> placeOnTimeline({
     required List<Block> blocks,
     required DateTime startTime,
     required int bufferMinutes,
   }) {
-    final List<Block> placed = [];
+    final placed = <Block>[];
     var cursor = startTime;
-
+    final gap = Duration(minutes: math.max(0, bufferMinutes));
     for (final block in blocks) {
-      final start = cursor;
-      final end = start.add(Duration(minutes: block.plannedDurationMinutes));
-      placed.add(block.copyWith(plannedStart: start, plannedEnd: end));
-      cursor = end.add(Duration(minutes: bufferMinutes));
+      final end = cursor.add(Duration(minutes: block.plannedDurationMinutes));
+      placed.add(block.copyWith(plannedStart: cursor, plannedEnd: end));
+      cursor = end.add(gap);
     }
-
     return placed;
   }
-    /// Recalculates only the future (pending) portion of the day.
-  /// Completed, skipped, cancelled, active, and paused blocks are
-  /// left untouched, per the Past=Immutable / Future=Recalculate rule.
+
+  /// Generates a routine ending no later than [dayEnd], budgeting every gap
+  /// between blocks (no leading/trailing buffer). Durations are whole minutes;
+  /// sub-minute remainder is left unused. Nonpositive windows return no blocks.
+  static List<Block> generateRoutine({
+    required List<Category> categories,
+    required DateTime startTime,
+    required DateTime dayEnd,
+    required int bufferMinutes,
+  }) => _generate(
+    categories: categories,
+    startTime: startTime,
+    dayEnd: dayEnd,
+    bufferMinutes: bufferMinutes,
+    credits: const {},
+    excludedIds: const {},
+  );
+
+  static List<Block> _generate({
+    required List<Category> categories,
+    required DateTime startTime,
+    required DateTime dayEnd,
+    required int bufferMinutes,
+    required Map<String, int> credits,
+    required Set<String> excludedIds,
+  }) {
+    final enabled = categories.where((c) => c.enabled).toList();
+    if (enabled.isEmpty) return [];
+    final window = dayEnd.difference(startTime).inMinutes;
+    final gap = math.max(0, bufferMinutes);
+    // Descend to the greatest feasible productive budget. Integer apportionment
+    // can change category/block counts non-monotonically, so binary search (or
+    // iteratively subtracting the previous gap estimate) can miss a valid fit.
+    // No blocks/IDs are created until a feasible allocation has been found.
+    for (var budget = window; budget > 0; budget--) {
+      final allocation = _allocate(enabled, budget, credits);
+      final count = enabled.fold<int>(
+        0,
+        (sum, category) =>
+            sum + _blockCount(category, allocation[category.id]!),
+      );
+      if (budget + math.max(0, count - 1) * gap <= window) {
+        return placeOnTimeline(
+          blocks: _split(enabled, allocation, excludedIds),
+          startTime: startTime,
+          bufferMinutes: gap,
+        );
+      }
+    }
+    return [];
+  }
+
+  /// Replaces only pending blocks. Every nonpending object/ID is preserved.
+  /// Completed work credits stored active seconds (or legacy actual timestamps
+  /// when no seconds were stored), never its planned duration. Active/paused
+  /// work credits elapsed time plus remaining planned commitment. Paused work
+  /// is treated as resuming now; its unbounded future pause cannot be predicted.
+  /// Future work starts after now, all remaining commitments, and their gaps.
+  /// Existing immutable blocks may themselves extend past the deadline; in that
+  /// case they are retained and no additional work is generated.
   static List<Block> recalculateFromCheckpoint({
     required List<Block> currentBlocks,
     required List<Category> categories,
@@ -161,36 +263,57 @@ class RoutineEngine {
     final untouched = currentBlocks
         .where((b) => b.status != BlockStatus.pending)
         .toList();
-
-    final remainingMinutes = dayEnd.difference(now).inMinutes;
-    final usableMinutes = calculateUsableMinutes(
-      totalMinutes: remainingMinutes,
-      fixedEventMinutes: 0, // no fixed events wired in yet
-      bufferMinutes: bufferMinutes,
-    );
-
-    final allocation = allocateTime(
-      categories: categories,
-      usableMinutes: usableMinutes,
-    );
-
-    final newFutureBlocks = splitIntoBlocks(
-      categories: categories,
-      allocation: allocation,
-    );
-
-    // Timeline continues from wherever the untouched blocks leave off,
-    // or from `now` if there are none.
-    final startTime = untouched.isNotEmpty
-        ? (untouched.last.plannedEnd ?? now)
-        : now;
-
-    final placedFuture = placeOnTimeline(
-      blocks: newFutureBlocks,
-      startTime: startTime,
-      bufferMinutes: bufferMinutes,
-    );
-
-    return [...untouched, ...placedFuture];
+    final credits = <String, int>{};
+    final gap = Duration(minutes: math.max(0, bufferMinutes));
+    var startTime = now;
+    for (final block in untouched) {
+      var creditedSeconds = 0;
+      if (block.status == BlockStatus.completed) {
+        creditedSeconds = math.max(0, block.accumulatedSeconds);
+        if (creditedSeconds == 0 &&
+            block.actualStart != null &&
+            block.actualEnd != null) {
+          creditedSeconds = math.max(
+            0,
+            block.actualEnd!.difference(block.actualStart!).inSeconds,
+          );
+        }
+      } else if (block.status == BlockStatus.active ||
+          block.status == BlockStatus.paused) {
+        final runningSeconds =
+            block.status == BlockStatus.active && block.runningSince != null
+            ? math.max(0, now.difference(block.runningSince!).inSeconds)
+            : 0;
+        final elapsedSeconds =
+            math.max(0, block.accumulatedSeconds) + runningSeconds;
+        final remainingSeconds = math.max(
+          0,
+          block.plannedDurationMinutes * 60 - elapsedSeconds,
+        );
+        creditedSeconds = elapsedSeconds + remainingSeconds;
+        startTime = startTime.add(Duration(seconds: remainingSeconds)).add(gap);
+      }
+      credits.update(
+        block.categoryId,
+        (value) => value + creditedSeconds,
+        ifAbsent: () => creditedSeconds,
+      );
+    }
+    // Aggregate seconds before truncation so multiple short completed blocks
+    // can together satisfy a minute of the daily allocation.
+    final creditedMinutes = {
+      for (final entry in credits.entries) entry.key: entry.value ~/ 60,
+    };
+    return [
+      ...untouched,
+      ..._generate(
+        categories: categories,
+        startTime: startTime,
+        dayEnd: dayEnd,
+        bufferMinutes: bufferMinutes,
+        credits: creditedMinutes,
+        excludedIds: currentBlocks.map((b) => b.id).toSet(),
+      ),
+    ];
   }
 }
