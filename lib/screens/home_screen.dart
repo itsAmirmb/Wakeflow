@@ -3,6 +3,9 @@ import 'wake_screen.dart';
 import 'today_screen.dart';
 import 'settings_screen.dart';
 import 'stats_screen.dart';
+import '../models/day_mode.dart';
+import '../models/block.dart';
+import '../models/category.dart';
 import '../services/database_service.dart';
 import '../services/day_key.dart';
 
@@ -16,6 +19,12 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   bool _checking = true;
   int _tabIndex = 0;
+
+  // If a routine was already generated for today, this holds what's
+  // needed to jump straight back into it from the Home tab.
+  DayMode? _todayDayMode;
+  List<Block>? _todayBlocks;
+  List<Category>? _todayCategories;
 
   @override
   void initState() {
@@ -39,25 +48,34 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (!mounted) return;
 
-    if (blocks.isEmpty) {
-      // Meta exists but blocks got cleared somehow — fall back safely.
-      setState(() => _checking = false);
-      return;
-    }
+    // Meta exists but blocks got cleared somehow — fall back safely to
+    // the normal Start Day flow instead of showing a broken "continue".
+    setState(() {
+      _checking = false;
+      if (blocks.isNotEmpty) {
+        _todayDayMode = dayMode;
+        _todayBlocks = blocks;
+        _todayCategories = categories;
+      }
+    });
+  }
 
-    // A routine already exists for today — resume it directly instead
-    // of asking the user to go through Wake Check again.
-    Navigator.pushReplacement(
+  void _openTodayScreen(BuildContext context) async {
+    await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => TodayScreen(
-          dayMode: dayMode,
-          blocks: blocks,
-          day: today,
-          categories: categories,
+          dayMode: _todayDayMode!,
+          blocks: _todayBlocks!,
+          day: dayKey(DateTime.now()),
+          categories: _todayCategories!,
         ),
       ),
     );
+    // Block statuses may have changed (started/completed/skipped) while
+    // on the Today screen, or a checkpoint may have replaced the whole
+    // future — refresh so the Home summary reflects that on return.
+    if (mounted) _checkForTodayRoutine();
   }
 
   @override
@@ -104,46 +122,77 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildHomeTab(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final hasTodayRoutine = _todayBlocks != null;
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.wb_sunny_outlined, size: 56, color: scheme.primary),
+            Icon(
+              hasTodayRoutine ? Icons.check_circle_outline : Icons.wb_sunny_outlined,
+              size: 56,
+              color: scheme.primary,
+            ),
             const SizedBox(height: 16),
             Text(
-              'Good morning 👋',
+              hasTodayRoutine ? "Today's routine is ready" : 'Good morning 👋',
               style: Theme.of(context)
                   .textTheme
                   .headlineSmall
                   ?.copyWith(fontWeight: FontWeight.w600),
+              textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
             Text(
-              'Ready to plan your day?',
+              hasTodayRoutine
+                  ? _todaySummary()
+                  : 'Ready to plan your day?',
               style: TextStyle(color: scheme.onSurfaceVariant),
+              textAlign: TextAlign.center,
             ),
             const SizedBox(height: 32),
-            Semantics(
-              button: true,
-              label: 'Start Day',
-              child: ElevatedButton(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const WakeScreen()),
-                  );
-                },
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size(200, 56),
+            if (hasTodayRoutine)
+              Semantics(
+                button: true,
+                label: "Continue today's routine",
+                child: ElevatedButton.icon(
+                  onPressed: () => _openTodayScreen(context),
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Continue Routine', style: TextStyle(fontSize: 18)),
+                  style: ElevatedButton.styleFrom(
+                    minimumSize: const Size(240, 56),
+                  ),
                 ),
-                child: const Text('Start Day', style: TextStyle(fontSize: 18)),
+              )
+            else
+              Semantics(
+                button: true,
+                label: 'Start Day',
+                child: ElevatedButton(
+                  onPressed: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const WakeScreen()),
+                    );
+                    if (mounted) _checkForTodayRoutine();
+                  },
+                  style: ElevatedButton.styleFrom(
+                    minimumSize: const Size(200, 56),
+                  ),
+                  child: const Text('Start Day', style: TextStyle(fontSize: 18)),
+                ),
               ),
-            ),
           ],
         ),
       ),
     );
+  }
+
+  String _todaySummary() {
+    final blocks = _todayBlocks!;
+    final done = blocks.where((b) => b.status == BlockStatus.completed).length;
+    return '$done/${blocks.length} blocks done · ${_todayDayMode!.label}';
   }
 }
