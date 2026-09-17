@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'wake_screen.dart';
 import 'today_screen.dart';
 import 'settings_screen.dart';
+import 'stats_screen.dart';
 import '../services/database_service.dart';
 import '../services/day_key.dart';
 
@@ -67,16 +68,31 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    final body = _tabIndex == 0 ? _buildHomeTab(context) : const SettingsScreen();
+    final Widget body;
+    final String title;
+    switch (_tabIndex) {
+      case 1:
+        body = const StatsScreen();
+        title = 'Stats';
+        break;
+      case 2:
+        body = const SettingsScreen();
+        title = 'Settings';
+        break;
+      default:
+        body = _buildHomeTab(context);
+        title = 'WakeFlow';
+    }
 
     return Scaffold(
-      appBar: AppBar(title: Text(_tabIndex == 0 ? 'WakeFlow' : 'Settings')),
+      appBar: AppBar(title: Text(title)),
       body: body,
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tabIndex,
         onDestinationSelected: (index) => setState(() => _tabIndex = index),
         destinations: const [
           NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
+          NavigationDestination(icon: Icon(Icons.bar_chart_outlined), selectedIcon: Icon(Icons.bar_chart), label: 'Stats'),
           NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'Settings'),
         ],
       ),
