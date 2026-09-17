@@ -19,6 +19,7 @@ class TodayScreen extends StatefulWidget {
 
   /// Optional persistence boundary for embedding and widget tests.
   final Future<void> Function(Block block)? persistBlock;
+  final Future<void> Function(Block block)? syncNotifications;
 
   const TodayScreen({
     super.key,
@@ -27,6 +28,7 @@ class TodayScreen extends StatefulWidget {
     required this.day,
     required this.categories,
     this.persistBlock,
+    this.syncNotifications,
   });
 
   @override
@@ -46,6 +48,7 @@ class _TodayScreenState extends State<TodayScreen> {
     final current = _currentBlock;
     if (current != null && current.status == BlockStatus.active) {
       _startTicking();
+      unawaited(_syncNotifications(current));
     }
   }
 
@@ -67,17 +70,49 @@ class _TodayScreenState extends State<TodayScreen> {
     return index == -1 ? null : _blocks[index];
   }
 
-  /// Writes a single block's current state to the DB, and cancels its
-  /// scheduled notifications now that it's no longer pending (so a
-  /// stale Start/End notification doesn't fire after the user already
-  /// acted on the block manually).
-  Future<void> _persist(Block block) async {
-    if (widget.persistBlock != null) {
-      await widget.persistBlock!(block);
-      return;
+  Future<void> _pendingWrite = Future<void>.value();
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _syncNotifications(Block block) async {
+    try {
+      if (widget.syncNotifications != null) {
+        await widget.syncNotifications!(block);
+      } else if (block.status == BlockStatus.active) {
+        await NotificationService.instance.scheduleActiveBlockEnd(block);
+      } else {
+        await NotificationService.instance.cancelForBlock(block.id);
+      }
+    } catch (_) {
+      _showError(
+        'Could not update block reminders. Check notification permissions.',
+      );
     }
-    await DatabaseService.instance.updateBlock(widget.day, block);
-    await NotificationService.instance.cancelForBlock(block.id);
+  }
+
+  // Keep writes and their notification updates in action order, even when the
+  // user pauses/completes before the preceding database write finishes.
+  Future<void> _persist(Block block) {
+    _pendingWrite = _pendingWrite.then((_) async {
+      try {
+        if (widget.persistBlock != null) {
+          await widget.persistBlock!(block);
+        } else {
+          await DatabaseService.instance.updateBlock(widget.day, block);
+        }
+      } catch (_) {
+        _showError(
+          'Could not save block progress. Reopen the routine to reload saved state.',
+        );
+        return;
+      }
+      await _syncNotifications(block);
+    });
+    return _pendingWrite;
   }
 
   void _startTicking() {
