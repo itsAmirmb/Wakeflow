@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
@@ -32,97 +33,152 @@ class DatabaseService {
 
     return openDatabase(
       path,
-      version: 5,
-      onCreate: (db, version) async {
-        await db.execute('''
-          CREATE TABLE categories (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            icon TEXT NOT NULL,
-            percentage REAL NOT NULL,
-            minimumMinutes INTEGER NOT NULL,
-            preferredBlockMinMinutes INTEGER NOT NULL,
-            preferredBlockMaxMinutes INTEGER NOT NULL,
-            priority INTEGER NOT NULL,
-            enabled INTEGER NOT NULL
-          )
-        ''');
-
-        await db.execute('''
-          CREATE TABLE blocks (
-            id TEXT PRIMARY KEY,
-            day TEXT NOT NULL,
-            categoryId TEXT NOT NULL,
-            title TEXT NOT NULL,
-            plannedDurationMinutes INTEGER NOT NULL,
-            plannedStart TEXT,
-            plannedEnd TEXT,
-            actualStart TEXT,
-            actualEnd TEXT,
-            status TEXT NOT NULL,
-            accumulatedSeconds INTEGER NOT NULL DEFAULT 0,
-            runningSince TEXT
-          )
-        ''');
-        await db.execute('CREATE INDEX idx_blocks_day ON blocks(day)');
-
-        await _createDayMetaTable(db);
-        await _createSettingsTable(db);
-
-        // Seed categories on first run so the app always has something
-        // to allocate time against.
-        final batch = db.batch();
-        for (final category in defaultCategories) {
-          batch.insert('categories', category.toMap());
-        }
-        await batch.commit(noResult: true);
-      },
-      onUpgrade: (db, oldVersion, newVersion) async {
-        // v1 -> v2: added day_meta (needed to resume today's routine
-        // after the app is killed). Older installs already have
-        // categories/blocks from v1, so only add what's missing.
-        if (oldVersion < 2) {
-          await _createDayMetaTable(db);
-        }
-        // v2 -> v3: added settings (buffer minutes, wake reminder time).
-        if (oldVersion < 3) {
-          await _createSettingsTable(db);
-        }
-        // v3 -> v4: added themeMode to settings (light/dark/system).
-        if (oldVersion < 4) {
-          // settings table won't exist yet if upgrading straight from
-          // v1/v2 in the same run — _createSettingsTable already
-          // includes themeMode for that case, so only ALTER when the
-          // table was already there.
-          if (oldVersion >= 3) {
-            await db.execute(
-              "ALTER TABLE settings ADD COLUMN themeMode TEXT NOT NULL DEFAULT 'system'",
-            );
-          }
-        }
-        // Older routines did not store their chosen deadline. NULL is
-        // intentional: callers use the last persisted planned end as fallback.
-        if (oldVersion >= 2 && oldVersion < 5) {
-          await db.execute('ALTER TABLE day_meta ADD COLUMN dayEnd TEXT');
-        }
-      },
+      version: 6,
+      onCreate: createSchema,
+      onUpgrade: upgradeSchema,
     );
   }
 
-  Future<void> _createDayMetaTable(Database db) async {
+  /// Adds [column] to [table] only when the table exists and lacks it.
+  ///
+  /// Schema changes used to live only in `onUpgrade`, so an install that
+  /// already reached the newest version number without the column (the
+  /// v5 release bug: fresh installs created `day_meta` without `dayEnd`)
+  /// never converged. Checking `PRAGMA table_info` makes every path —
+  /// fresh create, any historical upgrade path, or a DB stamped with a
+  /// newer version than its columns — end up with the same schema.
+  /// A missing table is skipped: CREATE TABLE hooks own whole tables.
+  @visibleForTesting
+  static Future<void> ensureColumn(
+    DatabaseExecutor db,
+    String table,
+    String column,
+    String definition,
+  ) async {
+    final info = await db.rawQuery('PRAGMA table_info($table)');
+    if (info.isEmpty || info.any((row) => row['name'] == column)) {
+      return;
+    }
+    await db.execute('ALTER TABLE $table ADD COLUMN $column $definition');
+  }
+
+  /// Full schema for a fresh install. Also reused by [upgradeSchema] when
+  /// an old install is missing whole tables.
+  @visibleForTesting
+  static Future<void> createSchema(Database db, int version) async {
+    await db.execute('''
+      CREATE TABLE categories (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        icon TEXT NOT NULL,
+        percentage REAL NOT NULL,
+        minimumMinutes INTEGER NOT NULL,
+        preferredBlockMinMinutes INTEGER NOT NULL,
+        preferredBlockMaxMinutes INTEGER NOT NULL,
+        priority INTEGER NOT NULL,
+        enabled INTEGER NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE blocks (
+        id TEXT PRIMARY KEY,
+        day TEXT NOT NULL,
+        categoryId TEXT NOT NULL,
+        title TEXT NOT NULL,
+        plannedDurationMinutes INTEGER NOT NULL,
+        plannedStart TEXT,
+        plannedEnd TEXT,
+        actualStart TEXT,
+        actualEnd TEXT,
+        status TEXT NOT NULL,
+        accumulatedSeconds INTEGER NOT NULL DEFAULT 0,
+        runningSince TEXT
+      )
+    ''');
+    await db.execute('CREATE INDEX idx_blocks_day ON blocks(day)');
+
+    await _createDayMetaTable(db);
+    await _createSettingsTable(db);
+
+    // Seed categories on first run so the app always has something
+    // to allocate time against.
+    final batch = db.batch();
+    for (final category in defaultCategories) {
+      batch.insert('categories', category.toMap());
+    }
+    await batch.commit(noResult: true);
+  }
+
+  @visibleForTesting
+  static Future<void> upgradeSchema(
+    Database db,
+    int oldVersion,
+    int newVersion,
+  ) async {
+    // v1 -> v2: added day_meta (needed to resume today's routine
+    // after the app is killed). Older installs already have
+    // categories/blocks from v1, so only add what's missing.
+    if (oldVersion < 2) {
+      await _createDayMetaTable(db);
+    }
+    // v2 -> v3: added settings (buffer minutes, wake reminder time).
+    if (oldVersion < 3) {
+      await _createSettingsTable(db);
+    }
+    // v3 -> v4: added themeMode to settings (light/dark/system).
+    if (oldVersion < 4) {
+      // settings table won't exist yet if upgrading straight from
+      // v1/v2 in the same run — _createSettingsTable already
+      // includes themeMode for that case, so only ALTER when the
+      // table was already there.
+      if (oldVersion >= 3) {
+        await db.execute(
+          "ALTER TABLE settings ADD COLUMN themeMode TEXT NOT NULL DEFAULT 'system'",
+        );
+      }
+    }
+    // v4 -> v5: routines now store their chosen deadline. NULL is
+    // intentional for rows written before this existed: callers use
+    // the last persisted planned end as fallback.
+    //
+    // v5 -> v6: the v5 release created day_meta WITHOUT dayEnd on fresh
+    // installs (onCreate never ran the ALTER), crashing Generate with
+    // "no column named dayEnd". Version 6 re-runs the migration on those
+    // devices. ensureColumn also reconciles columns a pre-0.9.1 v1
+    // install never received (timer columns on blocks). The guards are
+    // unconditional: every ensureColumn call is a no-op when its table
+    // or column is already correct, and _createDayMetaTable uses
+    // IF NOT EXISTS.
+    if (oldVersion < 6) {
+      await ensureColumn(db, 'day_meta', 'dayEnd', 'TEXT');
+      await ensureColumn(
+        db,
+        'blocks',
+        'accumulatedSeconds',
+        'INTEGER NOT NULL DEFAULT 0',
+      );
+      await ensureColumn(db, 'blocks', 'runningSince', 'TEXT');
+    }
+  }
+
+  static Future<void> _createDayMetaTable(Database db) async {
     // One row per day: the day-mode and wake time a routine was
     // generated with. Needed to resume "today" on app restart
-    // without re-asking the user to wake up.
+    // without re-asking the user to wake up. dayEnd is part of the
+    // CREATE now — a fresh v6 install must not depend on onUpgrade
+    // to add it (that was the v5 release bug).
     await db.execute('''
       CREATE TABLE IF NOT EXISTS day_meta (
         day TEXT PRIMARY KEY,
         dayMode TEXT NOT NULL,
-        wakeTime TEXT NOT NULL
+        wakeTime TEXT NOT NULL,
+        dayEnd TEXT
       )
     ''');
   }
 
-  Future<void> _createSettingsTable(Database db) async {
+  static Future<void> _createSettingsTable(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS settings (
         id INTEGER PRIMARY KEY,

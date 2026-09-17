@@ -66,13 +66,29 @@ class _DayModeScreenState extends State<DayModeScreen> {
 
     // Metadata and blocks are written atomically so a crash can never
     // leave a half-registered day (resume relies on both agreeing).
-    await DatabaseService.instance.saveDayRoutine(
-      day: today,
-      dayMode: widget.dayMode,
-      wakeTime: wakeTime,
-      dayEnd: dayEnd,
-      blocks: placedBlocks,
-    );
+    // Storage failures surface here — an unhandled error would only
+    // log to the console and leave the button dead.
+    try {
+      await DatabaseService.instance.saveDayRoutine(
+        day: today,
+        dayMode: widget.dayMode,
+        wakeTime: wakeTime,
+        dayEnd: dayEnd,
+        blocks: placedBlocks,
+      );
+    } catch (error) {
+      debugPrint('Saving routine failed: $error');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not save the routine. Free up storage and try again.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
     await NotificationService.instance.scheduleForBlocks(placedBlocks);
 
     if (!context.mounted) return;
