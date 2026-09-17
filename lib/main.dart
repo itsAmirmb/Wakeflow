@@ -1,24 +1,45 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+
+import 'models/app_settings.dart';
 import 'screens/home_screen.dart';
 import 'services/notification_service.dart';
 import 'services/database_service.dart';
 import 'services/theme_controller.dart';
 
-void main() async {
+Future<void> main() async {
   // Required before any plugin (sqflite, notifications) is used prior to runApp.
   WidgetsFlutterBinding.ensureInitialized();
 
-  await NotificationService.instance.init();
-  await NotificationService.instance.requestPermissions();
-
-  final settings = await DatabaseService.instance.getSettings();
-  await NotificationService.instance.scheduleWakeReminder(
-    hour: settings.wakeReminderHour,
-    minute: settings.wakeReminderMinute,
-  );
-  ThemeController.instance.setFromStored(settings.themeMode);
-
   runApp(const WakeFlowApp());
+  // Render before plugins/permissions. All asynchronous bootstrap errors are
+  // handled below; a denied permission never prevents runApp.
+  unawaited(_loadSettingsAndApply());
+}
+
+Future<void> _loadSettingsAndApply() async {
+  var settings = const AppSettings();
+  try {
+    settings = await DatabaseService.instance.getSettings();
+  } on Object catch (error) {
+    debugPrint('Settings load failed, using defaults: $error');
+  }
+
+  ThemeController.instance.setFromStored(settings.themeMode);
+  try {
+    await NotificationService.instance.requestPermissions();
+  } catch (error) {
+    debugPrint('Notification permission request failed: $error');
+  }
+  try {
+    await NotificationService.instance.scheduleWakeReminder(
+      hour: settings.wakeReminderHour,
+      minute: settings.wakeReminderMinute,
+    );
+  } catch (error) {
+    debugPrint('Wake reminder scheduling failed (app continues): $error');
+  }
 }
 
 class WakeFlowApp extends StatelessWidget {
@@ -63,9 +84,7 @@ class WakeFlowApp extends StatelessWidget {
       cardTheme: CardThemeData(
         elevation: 0,
         color: colorScheme.surfaceContainerHigh,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
@@ -92,9 +111,7 @@ class WakeFlowApp extends StatelessWidget {
         indicatorColor: colorScheme.secondaryContainer,
       ),
       listTileTheme: ListTileThemeData(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
       progressIndicatorTheme: ProgressIndicatorThemeData(
         color: colorScheme.primary,
@@ -105,9 +122,7 @@ class WakeFlowApp extends StatelessWidget {
       ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
       pageTransitionsTheme: PageTransitionsTheme(
         builders: {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../models/category.dart';
 import '../models/app_settings.dart';
 import '../services/database_service.dart';
@@ -6,7 +7,24 @@ import '../services/notification_service.dart';
 import '../services/theme_controller.dart';
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({
+    super.key,
+    this.loadCategories,
+    this.loadSettings,
+    this.persistSettings,
+    this.persistCategory,
+    this.scheduleWakeReminder,
+  });
+
+  final Future<List<Category>> Function()? loadCategories;
+  final Future<AppSettings> Function()? loadSettings;
+  final Future<void> Function(AppSettings)? persistSettings;
+  final Future<void> Function(Category)? persistCategory;
+  final Future<void> Function(int hour, int minute)? scheduleWakeReminder;
+
+  static bool wakeTimeChanged(AppSettings before, AppSettings after) =>
+      before.wakeReminderHour != after.wakeReminderHour ||
+      before.wakeReminderMinute != after.wakeReminderMinute;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -15,6 +33,9 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   List<Category>? _categories;
   AppSettings _settings = const AppSettings();
+  AppSettings _persistedSettings = const AppSettings();
+  bool _saving = false;
+  String? _loadError;
 
   @override
   void initState() {
@@ -23,39 +44,102 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _load() async {
-    final categories = await DatabaseService.instance.getCategories();
-    final settings = await DatabaseService.instance.getSettings();
+    if (mounted) setState(() => _loadError = null);
+    try {
+      final categories =
+          await (widget.loadCategories ??
+              DatabaseService.instance.getCategories)();
+      final settings =
+          await (widget.loadSettings ?? DatabaseService.instance.getSettings)();
+      if (!mounted) return;
+      setState(() {
+        _categories = categories;
+        _settings = _persistedSettings = settings;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loadError = 'Could not load settings.');
+    }
+  }
+
+  void _showError(String message) {
     if (!mounted) return;
-    setState(() {
-      _categories = categories;
-      _settings = settings;
-    });
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _saveSettings(AppSettings settings) async {
-    await DatabaseService.instance.saveSettings(settings);
-    // Re-schedule the daily reminder immediately so a time change
-    // takes effect without waiting for the next app restart.
-    await NotificationService.instance.scheduleWakeReminder(
-      hour: settings.wakeReminderHour,
-      minute: settings.wakeReminderMinute,
-    );
-    setState(() => _settings = settings);
+    if (!mounted || _saving) return;
+    final previous = _persistedSettings;
+    final reschedule = SettingsScreen.wakeTimeChanged(previous, settings);
+    setState(() => _saving = true);
+    try {
+      try {
+        await (widget.persistSettings ?? DatabaseService.instance.saveSettings)(
+          settings,
+        );
+      } catch (_) {
+        if (mounted) setState(() => _settings = previous);
+        ThemeController.instance.setFromStored(previous.themeMode);
+        _showError('Could not save settings. Please try again.');
+        return;
+      }
+      _persistedSettings = settings;
+      ThemeController.instance.setFromStored(settings.themeMode);
+      if (mounted) setState(() => _settings = settings);
+      // A scheduling failure must NOT roll back the UI after a successful DB
+      // write. Keep the saved setting and report the partial failure honestly.
+      if (reschedule) {
+        try {
+          final schedule = widget.scheduleWakeReminder;
+          if (schedule != null) {
+            await schedule(
+              settings.wakeReminderHour,
+              settings.wakeReminderMinute,
+            );
+          } else {
+            await NotificationService.instance.scheduleWakeReminder(
+              hour: settings.wakeReminderHour,
+              minute: settings.wakeReminderMinute,
+            );
+          }
+        } catch (_) {
+          _showError(
+            'Settings saved, but the reminder could not be scheduled. '
+            'Check notification permissions and reopen the app to retry.',
+          );
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<void> _setThemeMode(ThemeMode mode) async {
-    final stored = ThemeController.toStored(mode);
-    ThemeController.instance.mode.value = mode; // instant, no restart
-    await _saveSettings(_settings.copyWith(themeMode: stored));
+    if (_saving) return;
+    ThemeController.instance.mode.value = mode;
+    await _saveSettings(
+      _settings.copyWith(themeMode: ThemeController.toStored(mode)),
+    );
   }
 
   Future<void> _saveCategory(Category category) async {
-    await DatabaseService.instance.updateCategory(category);
-    setState(() {
-      _categories = _categories!
-          .map((c) => c.id == category.id ? category : c)
-          .toList();
-    });
+    if (!mounted || _saving) return;
+    setState(() => _saving = true);
+    try {
+      await (widget.persistCategory ?? DatabaseService.instance.updateCategory)(
+        category,
+      );
+      if (!mounted) return;
+      setState(() {
+        _categories = _categories!
+            .map((c) => c.id == category.id ? category : c)
+            .toList();
+      });
+    } catch (_) {
+      _showError('Could not save category. Please try again.');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<void> _pickWakeReminderTime() async {
@@ -66,106 +150,142 @@ class _SettingsScreenState extends State<SettingsScreen> {
         minute: _settings.wakeReminderMinute,
       ),
     );
-    if (picked == null) return;
-    await _saveSettings(_settings.copyWith(
-      wakeReminderHour: picked.hour,
-      wakeReminderMinute: picked.minute,
-    ));
+    if (!mounted || picked == null) return;
+    await _saveSettings(
+      _settings.copyWith(
+        wakeReminderHour: picked.hour,
+        wakeReminderMinute: picked.minute,
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final categories = _categories;
     if (categories == null) {
+      if (_loadError != null) {
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(_loadError!),
+              TextButton(onPressed: _load, child: const Text('Retry')),
+            ],
+          ),
+        );
+      }
       return const Center(child: CircularProgressIndicator());
     }
 
-    return ListView(
-      children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
-          child: Text('General', style: TextStyle(fontWeight: FontWeight.bold)),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-          child: Row(
-            children: [
-              const Icon(Icons.dark_mode_outlined),
-              const SizedBox(width: 12),
-              const Text('Theme'),
-              const Spacer(),
-            ],
+    return AbsorbPointer(
+      absorbing: _saving,
+      child: ListView(
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+            child: Text(
+              'General',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
           ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-          child: SegmentedButton<ThemeMode>(
-            segments: const [
-              ButtonSegment(
-                value: ThemeMode.system,
-                label: Text('System'),
-                icon: Icon(Icons.brightness_auto),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: Row(
+              children: [
+                const Icon(Icons.dark_mode_outlined),
+                const SizedBox(width: 12),
+                const Text('Theme'),
+                const Spacer(),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            child: SegmentedButton<ThemeMode>(
+              segments: const [
+                ButtonSegment(
+                  value: ThemeMode.system,
+                  label: Text('System'),
+                  icon: Icon(Icons.brightness_auto),
+                ),
+                ButtonSegment(
+                  value: ThemeMode.light,
+                  label: Text('Light'),
+                  icon: Icon(Icons.light_mode),
+                ),
+                ButtonSegment(
+                  value: ThemeMode.dark,
+                  label: Text('Dark'),
+                  icon: Icon(Icons.dark_mode),
+                ),
+              ],
+              selected: {ThemeController.instance.mode.value},
+              onSelectionChanged: (selection) => _setThemeMode(selection.first),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.notifications_active_outlined),
+            title: const Text('Wake reminder'),
+            subtitle: Text(
+              TimeOfDay(
+                hour: _settings.wakeReminderHour,
+                minute: _settings.wakeReminderMinute,
+              ).format(context),
+            ),
+            onTap: _pickWakeReminderTime,
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              'Next occurrence only, renewed when you open the app or '
+              'change the wake time. Daily reminders while the app stays closed '
+              'are not supported yet. Reopen after changing timezones. '
+              'Without exact-alarm access, delivery may be delayed.',
+            ),
+          ),
+          if (_saving) const LinearProgressIndicator(),
+          ListTile(
+            leading: const Icon(Icons.space_bar),
+            title: const Text('Buffer between blocks'),
+            subtitle: Text('${_settings.bufferMinutes} minutes'),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Slider(
+              value: _settings.bufferMinutes.toDouble(),
+              min: 0,
+              max: 30,
+              divisions: 30,
+              label: '${_settings.bufferMinutes}m',
+              onChanged: (value) {
+                // Live-update the label while dragging; persist on release
+                // (onChangeEnd) so we're not hitting the DB every pixel.
+                setState(
+                  () => _settings = _settings.copyWith(
+                    bufferMinutes: value.round(),
+                  ),
+                );
+              },
+              onChangeEnd: (value) => _saveSettings(
+                _settings.copyWith(bufferMinutes: value.round()),
               ),
-              ButtonSegment(
-                value: ThemeMode.light,
-                label: Text('Light'),
-                icon: Icon(Icons.light_mode),
-              ),
-              ButtonSegment(
-                value: ThemeMode.dark,
-                label: Text('Dark'),
-                icon: Icon(Icons.dark_mode),
-              ),
-            ],
-            selected: {ThemeController.instance.mode.value},
-            onSelectionChanged: (selection) => _setThemeMode(selection.first),
+            ),
           ),
-        ),
-        ListTile(
-          leading: const Icon(Icons.notifications_active_outlined),
-          title: const Text('Wake reminder'),
-          subtitle: Text(
-            TimeOfDay(
-              hour: _settings.wakeReminderHour,
-              minute: _settings.wakeReminderMinute,
-            ).format(context),
+          const Divider(height: 32),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Text(
+              'Categories',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
           ),
-          onTap: _pickWakeReminderTime,
-        ),
-        ListTile(
-          leading: const Icon(Icons.space_bar),
-          title: const Text('Buffer between blocks'),
-          subtitle: Text('${_settings.bufferMinutes} minutes'),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Slider(
-            value: _settings.bufferMinutes.toDouble(),
-            min: 0,
-            max: 30,
-            divisions: 30,
-            label: '${_settings.bufferMinutes}m',
-            onChanged: (value) {
-              // Live-update the label while dragging; persist on release
-              // (onChangeEnd) so we're not hitting the DB every pixel.
-              setState(() => _settings = _settings.copyWith(bufferMinutes: value.round()));
-            },
-            onChangeEnd: (value) => _saveSettings(_settings.copyWith(bufferMinutes: value.round())),
+          ...categories.map(
+            (category) =>
+                _CategoryTile(category: category, onChanged: _saveCategory),
           ),
-        ),
-        const Divider(height: 32),
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 0, 16, 4),
-          child: Text('Categories', style: TextStyle(fontWeight: FontWeight.bold)),
-        ),
-        ...categories.map(
-          (category) => _CategoryTile(
-            category: category,
-            onChanged: _saveCategory,
-          ),
-        ),
-        const SizedBox(height: 24),
-      ],
+          const SizedBox(height: 24),
+        ],
+      ),
     );
   }
 }
@@ -285,7 +405,10 @@ class _LabeledSliderState extends State<_LabeledSlider> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(widget.label, style: Theme.of(context).textTheme.bodySmall),
-              Text(widget.formatValue(_dragValue), style: Theme.of(context).textTheme.bodySmall),
+              Text(
+                widget.formatValue(_dragValue),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
             ],
           ),
           Slider(
