@@ -1,5 +1,7 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
+
 import '../models/day_mode.dart';
 import '../models/block.dart';
 import '../models/category.dart';
@@ -50,11 +52,11 @@ class _TodayScreenState extends State<TodayScreen> {
   }
 
   int get _currentIndex => _blocks.indexWhere(
-        (b) =>
-            b.status == BlockStatus.pending ||
-            b.status == BlockStatus.active ||
-            b.status == BlockStatus.paused,
-      );
+    (b) =>
+        b.status == BlockStatus.pending ||
+        b.status == BlockStatus.active ||
+        b.status == BlockStatus.paused,
+  );
 
   Block? get _currentBlock {
     final index = _currentIndex;
@@ -170,14 +172,20 @@ class _TodayScreenState extends State<TodayScreen> {
 
   Future<void> _runCheckpoint() async {
     final now = DateTime.now();
-    final dayEnd = DateTime(now.year, now.month, now.day + 1);
     final settings = await DatabaseService.instance.getSettings();
+    final meta = await DatabaseService.instance.getDayMeta(widget.day);
+
+    // Prefer the deadline the user actually picked on the Wake screen;
+    // only fall back to midnight for routines created before the
+    // deadline was persisted (or if the meta row is missing).
+    final dayEnd = meta?.$3 ?? DateTime(now.year, now.month, now.day + 1);
 
     // Cancel notifications for the old future blocks before they get
     // replaced — otherwise stale Start/End alerts could fire for
     // times that no longer match the recalculated routine.
-    final oldFuture =
-        _blocks.where((b) => b.status == BlockStatus.pending).toList();
+    final oldFuture = _blocks
+        .where((b) => b.status == BlockStatus.pending)
+        .toList();
     await NotificationService.instance.cancelForBlocks(oldFuture);
 
     final recalculated = RoutineEngine.recalculateFromCheckpoint(
@@ -227,17 +235,15 @@ class _TodayScreenState extends State<TodayScreen> {
               children: [
                 Text(
                   widget.dayMode.label,
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                  style: Theme.of(context).textTheme.titleLarge
+                      ?.copyWith(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(width: 8),
                 Text(
                   '· ${_blocks.where((b) => b.status == BlockStatus.completed).length}/${_blocks.length} done',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyMedium
-                      ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -297,9 +303,13 @@ class _BlockTile extends StatelessWidget {
       duration: const Duration(milliseconds: 250),
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-        color: isCurrent ? scheme.primaryContainer.withValues(alpha: 0.5) : null,
+        color: isCurrent
+            ? scheme.primaryContainer.withValues(alpha: 0.5)
+            : null,
         borderRadius: BorderRadius.circular(14),
-        border: isCurrent ? Border.all(color: scheme.primary, width: 1.5) : null,
+        border: isCurrent
+            ? Border.all(color: scheme.primary, width: 1.5)
+            : null,
       ),
       child: ListTile(
         leading: Column(
@@ -350,7 +360,10 @@ class _DayCompletePanel extends StatelessWidget {
         children: [
           Text('🎉', style: TextStyle(fontSize: 32)),
           SizedBox(height: 8),
-          Text('Day complete', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          Text(
+            'Day complete',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
         ],
       ),
     );
@@ -378,7 +391,9 @@ class _CurrentBlockPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final showTimer = block.status == BlockStatus.active || block.status == BlockStatus.paused;
+    final showTimer =
+        block.status == BlockStatus.active ||
+        block.status == BlockStatus.paused;
 
     return Container(
       width: double.infinity,
@@ -416,7 +431,10 @@ class _CurrentBlockPanel extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               _formatElapsed(block.elapsedAt(DateTime.now())),
-              style: const TextStyle(fontSize: 32, fontFeatures: [FontFeature.tabularFigures()]),
+              style: const TextStyle(
+                fontSize: 32,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
             ),
           ],
           const SizedBox(height: 16),

@@ -32,7 +32,7 @@ class DatabaseService {
 
     return openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE categories (
@@ -99,6 +99,11 @@ class DatabaseService {
               "ALTER TABLE settings ADD COLUMN themeMode TEXT NOT NULL DEFAULT 'system'",
             );
           }
+        }
+        // Older routines did not store their chosen deadline. NULL is
+        // intentional: callers use the last persisted planned end as fallback.
+        if (oldVersion >= 2 && oldVersion < 5) {
+          await db.execute('ALTER TABLE day_meta ADD COLUMN dayEnd TEXT');
         }
       },
     );
@@ -197,22 +202,21 @@ class DatabaseService {
     required String day,
     required DayMode dayMode,
     required DateTime wakeTime,
+    DateTime? dayEnd,
   }) async {
     final db = await database;
-    await db.insert(
-      'day_meta',
-      {
-        'day': day,
-        'dayMode': dayMode.name,
-        'wakeTime': wakeTime.toIso8601String(),
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('day_meta', {
+      'day': day,
+      'dayMode': dayMode.name,
+      'wakeTime': wakeTime.toIso8601String(),
+      'dayEnd': dayEnd?.toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  /// Returns (dayMode, wakeTime) for [day], or null if no routine has
-  /// been generated for that day yet.
-  Future<(DayMode, DateTime)?> getDayMeta(String day) async {
+  /// Returns (dayMode, wakeTime, dayEnd) for [day], or null if no routine
+  /// has been generated for that day yet. [dayEnd] is null for routines
+  /// created before the deadline was persisted (schema v5).
+  Future<(DayMode, DateTime, DateTime?)?> getDayMeta(String day) async {
     final db = await database;
     final rows = await db.query('day_meta', where: 'day = ?', whereArgs: [day]);
     if (rows.isEmpty) return null;
@@ -220,7 +224,35 @@ class DatabaseService {
     return (
       DayMode.values.byName(row['dayMode'] as String),
       DateTime.parse(row['wakeTime'] as String),
+      row['dayEnd'] == null ? null : DateTime.parse(row['dayEnd'] as String),
     );
+  }
+
+  /// Writes a day's metadata and its blocks atomically. Either both land
+  /// or neither does, so a crash mid-generation can never leave a day
+  /// resumable with no blocks (or blocks with no meta).
+  Future<void> saveDayRoutine({
+    required String day,
+    required DayMode dayMode,
+    required DateTime wakeTime,
+    DateTime? dayEnd,
+    required List<Block> blocks,
+  }) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.insert('day_meta', {
+        'day': day,
+        'dayMode': dayMode.name,
+        'wakeTime': wakeTime.toIso8601String(),
+        'dayEnd': dayEnd?.toIso8601String(),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.delete('blocks', where: 'day = ?', whereArgs: [day]);
+      final batch = txn.batch();
+      for (final block in blocks) {
+        batch.insert('blocks', block.toMap(day: day));
+      }
+      await batch.commit(noResult: true);
+    });
   }
 
   /// All distinct days that have blocks, excluding [today] — this is

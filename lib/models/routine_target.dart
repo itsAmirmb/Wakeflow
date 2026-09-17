@@ -18,21 +18,27 @@ class RoutineTarget {
   final int? targetDurationMinutes;
 
   const RoutineTarget.time({required int hour, required int minute})
-      : mode = RoutineTargetMode.targetTime,
-        targetHour = hour,
-        targetMinute = minute,
-        targetDurationMinutes = null;
+    : mode = RoutineTargetMode.targetTime,
+      targetHour = hour,
+      targetMinute = minute,
+      targetDurationMinutes = null;
 
   const RoutineTarget.duration({required int minutes})
-      : mode = RoutineTargetMode.targetDuration,
-        targetDurationMinutes = minutes,
-        targetHour = null,
-        targetMinute = null;
+    : mode = RoutineTargetMode.targetDuration,
+      targetDurationMinutes = minutes,
+      targetHour = null,
+      targetMinute = null;
 
   /// Total usable minutes from [wakeTime] to the target, per this mode.
-  int totalMinutesFrom(DateTime wakeTime) {
+  int totalMinutesFrom(DateTime wakeTime) =>
+      endFrom(wakeTime).difference(wakeTime).inMinutes;
+
+  /// The instant the routine must finish by, per this mode. A [targetTime]
+  /// value not after [wakeTime] resolves to tomorrow (e.g. woke at 20:00
+  /// targeting 18:30 means tomorrow 18:30, not the past).
+  DateTime endFrom(DateTime wakeTime) {
     if (mode == RoutineTargetMode.targetDuration) {
-      return targetDurationMinutes!;
+      return wakeTime.add(Duration(minutes: targetDurationMinutes!));
     }
     var target = DateTime(
       wakeTime.year,
@@ -46,6 +52,6 @@ class RoutineTarget {
     if (!target.isAfter(wakeTime)) {
       target = target.add(const Duration(days: 1));
     }
-    return target.difference(wakeTime).inMinutes;
+    return target;
   }
 }

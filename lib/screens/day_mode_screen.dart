@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../models/day_mode.dart';
 import '../models/category.dart';
 import '../models/routine_target.dart';
@@ -53,38 +54,25 @@ class _DayModeScreenState extends State<DayModeScreen> {
     // Usable time is bounded by whichever mode the user picked on the
     // Wake screen: a fixed clock time to finish by, or a fixed total
     // duration from wake time.
-    final totalMinutes = widget.target.totalMinutesFrom(wakeTime);
-    final bufferMinutes = _bufferMinutes;
-
-    final usableMinutes = RoutineEngine.calculateUsableMinutes(
-      totalMinutes: totalMinutes,
-      fixedEventMinutes: 0,
-      bufferMinutes: bufferMinutes,
-    );
-
-    final allocation = RoutineEngine.allocateTime(
-      categories: categories,
-      usableMinutes: usableMinutes,
-    );
-
-    final blocks = RoutineEngine.splitIntoBlocks(
-      categories: categories,
-      allocation: allocation,
-    );
-
-    final placedBlocks = RoutineEngine.placeOnTimeline(
-      blocks: blocks,
-      startTime: wakeTime,
-      bufferMinutes: bufferMinutes,
-    );
-
+    final dayEnd = widget.target.endFrom(wakeTime);
     final today = dayKey(wakeTime);
-    await DatabaseService.instance.saveDayMeta(
+
+    final placedBlocks = RoutineEngine.generateRoutine(
+      categories: categories,
+      startTime: wakeTime,
+      dayEnd: dayEnd,
+      bufferMinutes: _bufferMinutes,
+    );
+
+    // Metadata and blocks are written atomically so a crash can never
+    // leave a half-registered day (resume relies on both agreeing).
+    await DatabaseService.instance.saveDayRoutine(
       day: today,
       dayMode: widget.dayMode,
       wakeTime: wakeTime,
+      dayEnd: dayEnd,
+      blocks: placedBlocks,
     );
-    await DatabaseService.instance.saveBlocksForDay(today, placedBlocks);
     await NotificationService.instance.scheduleForBlocks(placedBlocks);
 
     if (!context.mounted) return;
@@ -117,7 +105,9 @@ class _DayModeScreenState extends State<DayModeScreen> {
                       Text(
                         '${widget.dayMode.label} DAY',
                         style: const TextStyle(
-                            fontSize: 26, fontWeight: FontWeight.bold),
+                          fontSize: 26,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       const SizedBox(height: 8),
                       Text(
@@ -143,12 +133,16 @@ class _DayModeScreenState extends State<DayModeScreen> {
                   child: ElevatedButton(
                     onPressed: () => _generateRoutine(context),
                     style: ElevatedButton.styleFrom(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 40,
+                        vertical: 16,
+                      ),
                       minimumSize: const Size(double.infinity, 50),
                     ),
-                    child:
-                        const Text('Generate Routine', style: TextStyle(fontSize: 18)),
+                    child: const Text(
+                      'Generate Routine',
+                      style: TextStyle(fontSize: 18),
+                    ),
                   ),
                 ),
               ],
