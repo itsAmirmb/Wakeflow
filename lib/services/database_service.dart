@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import '../models/checkpoint_report.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
@@ -18,6 +21,9 @@ import '../data/default_categories.dart';
 ///   "History" = every other day's blocks, grouped by day.
 class DatabaseService {
   DatabaseService._internal();
+
+  @visibleForTesting
+  DatabaseService.forTesting(Database database) : _db = database;
   static final DatabaseService instance = DatabaseService._internal();
 
   Database? _db;
@@ -33,7 +39,7 @@ class DatabaseService {
 
     return openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: createSchema,
       onUpgrade: upgradeSchema,
     );
@@ -100,6 +106,7 @@ class DatabaseService {
 
     await _createDayMetaTable(db);
     await _createSettingsTable(db);
+    await _createCheckpointsTable(db);
 
     // Seed categories on first run so the app always has something
     // to allocate time against.
@@ -160,6 +167,46 @@ class DatabaseService {
       );
       await ensureColumn(db, 'blocks', 'runningSince', 'TEXT');
     }
+    if (oldVersion < 7) {
+      await ensureColumn(db, 'settings', 'checkpointTimes', "TEXT NOT NULL DEFAULT '[]'");
+      await _createCheckpointsTable(db);
+    }
+  }
+
+  static Future<void> _createCheckpointsTable(DatabaseExecutor db) async {
+    await db.execute('''CREATE TABLE IF NOT EXISTS checkpoints (
+      id TEXT PRIMARY KEY, day TEXT NOT NULL, reviewedAt TEXT NOT NULL,
+      report TEXT NOT NULL, assessments TEXT NOT NULL, note TEXT NOT NULL,
+      recalculated INTEGER NOT NULL
+    )''');
+  }
+
+  /// Reflection and optional future replacement commit together.
+  Future<void> saveCheckpoint({
+    required String id, required String day, required CheckpointReport report,
+    required Map<String, CheckpointAssessment> assessments,
+    required String note, List<Block>? proposed,
+  }) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.insert('checkpoints', {
+        'id': id, 'day': day, 'reviewedAt': report.now.toIso8601String(),
+        'report': jsonEncode(report.toJson()),
+        'assessments': jsonEncode(assessments.map((k, v) => MapEntry(k, v.name))),
+        'note': note, 'recalculated': proposed == null ? 0 : 1,
+      });
+      if (proposed != null) {
+        await txn.delete('blocks', where: 'day = ?', whereArgs: [day]);
+        for (final block in proposed) {
+          await txn.insert('blocks', block.toMap(day: day));
+        }
+      }
+    });
+  }
+
+  Future<List<Map<String, Object?>>> getCheckpoints(String day) async {
+    final db = await database;
+    return db.query('checkpoints', where: 'day = ?', whereArgs: [day], orderBy: 'reviewedAt DESC');
   }
 
   static Future<void> _createDayMetaTable(Database db) async {
@@ -185,7 +232,8 @@ class DatabaseService {
         bufferMinutes INTEGER NOT NULL,
         wakeReminderHour INTEGER NOT NULL,
         wakeReminderMinute INTEGER NOT NULL,
-        themeMode TEXT NOT NULL DEFAULT 'system'
+        themeMode TEXT NOT NULL DEFAULT 'system',
+        checkpointTimes TEXT NOT NULL DEFAULT '[]'
       )
     ''');
   }

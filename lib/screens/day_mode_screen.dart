@@ -89,7 +89,16 @@ class _DayModeScreenState extends State<DayModeScreen> {
       }
       return;
     }
-    await NotificationService.instance.scheduleForBlocks(placedBlocks);
+    try {
+      await NotificationService.instance.scheduleForBlocks(placedBlocks);
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Routine saved, but block reminders could not be updated.'),
+        ));
+      }
+    }
+    // Today refreshes fixed checkpoint reminders from the persisted metadata.
 
     if (!context.mounted) return;
     Navigator.push(

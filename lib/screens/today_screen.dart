@@ -3,6 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/day_mode.dart';
+import '../models/app_settings.dart';
+import '../models/checkpoint_report.dart';
+import 'checkpoint_screen.dart';
+import 'checkpoint_history_screen.dart';
 import '../models/block.dart';
 import '../models/category.dart';
 import '../services/routine_engine.dart';
@@ -20,6 +24,10 @@ class TodayScreen extends StatefulWidget {
   /// Optional persistence boundary for embedding and widget tests.
   final Future<void> Function(Block block)? persistBlock;
   final Future<void> Function(Block block)? syncNotifications;
+  final DatabaseService? database;
+  final DateTime Function()? now;
+  final Future<void> Function(AppSettings settings, DateTime wake, DateTime end)?
+      syncCheckpointReminders;
 
   const TodayScreen({
     super.key,
@@ -29,20 +37,73 @@ class TodayScreen extends StatefulWidget {
     required this.categories,
     this.persistBlock,
     this.syncNotifications,
+    this.database,
+    this.now,
+    this.syncCheckpointReminders,
   });
 
   @override
   State<TodayScreen> createState() => _TodayScreenState();
 }
 
-class _TodayScreenState extends State<TodayScreen> {
+class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   late List<Block> _blocks;
   Timer? _timer;
+  bool _reviewing = false;
+  bool _writeFailed = false;
+  int? _reviewCount;
+  String? _checkpointError;
+  DatabaseService get _db => widget.database ?? DatabaseService.instance;
+  DateTime get _now => (widget.now ?? DateTime.now)();
+
+  Future<void> _refreshCheckpoints() async {
+    try {
+      final reviews = await _db.getCheckpoints(widget.day);
+      if (!mounted) return;
+      setState(() {
+        _reviewCount = reviews.length;
+        _checkpointError = null;
+      });
+      final settings = await _db.getSettings();
+      final meta = await _db.getDayMeta(widget.day);
+      if (!mounted || meta == null) return;
+      final end = _deadline(meta.$3);
+      if (widget.syncCheckpointReminders != null) {
+        await widget.syncCheckpointReminders!(settings, meta.$2, end);
+      } else {
+        await NotificationService.instance.scheduleCheckpointReminders(
+          day: widget.day, wakeTime: meta.$2, dayEnd: end,
+          minutesOfDay: settings.checkpointMinutesOfDay,
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _checkpointError = 'Checkpoint data/reminders unavailable. Tap to retry.';
+        });
+      }
+    }
+  }
+
+  DateTime _deadline(DateTime? saved) {
+    if (saved != null) return saved;
+    final ends = _blocks.map((b) => b.plannedEnd).whereType<DateTime>().toList()..sort();
+    if (ends.isNotEmpty) return ends.last;
+    final day = DateTime.parse(widget.day);
+    return DateTime(day.year, day.month, day.day + 1);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_refreshCheckpoints());
+  }
 
   @override
   void initState() {
     super.initState();
     _blocks = List<Block>.of(widget.blocks);
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_refreshCheckpoints());
     // If a block was already running when the app was closed, resume
     // ticking so the on-screen timer keeps advancing.
     final current = _currentBlock;
@@ -54,6 +115,7 @@ class _TodayScreenState extends State<TodayScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     super.dispose();
   }
@@ -102,9 +164,10 @@ class _TodayScreenState extends State<TodayScreen> {
         if (widget.persistBlock != null) {
           await widget.persistBlock!(block);
         } else {
-          await DatabaseService.instance.updateBlock(widget.day, block);
+          await _db.updateBlock(widget.day, block);
         }
       } catch (_) {
+        _writeFailed = true;
         _showError(
           'Could not save block progress. Reopen the routine to reload saved state.',
         );
@@ -134,7 +197,7 @@ class _TodayScreenState extends State<TodayScreen> {
   // AnimatedSwitcher retains outgoing panels during the transition. Their
   // callbacks must never act on a newer state (even for the same block ID).
   void _actOn(Block expected, VoidCallback action) {
-    if (!mounted || !identical(_currentBlock, expected)) return;
+    if (!mounted || _reviewing || !identical(_currentBlock, expected)) return;
     action();
   }
 
@@ -221,44 +284,65 @@ class _TodayScreenState extends State<TodayScreen> {
   }
 
   Future<void> _runCheckpoint() async {
-    final now = DateTime.now();
-    final settings = await DatabaseService.instance.getSettings();
-    final meta = await DatabaseService.instance.getDayMeta(widget.day);
-
-    // Prefer the deadline the user actually picked on the Wake screen;
-    // only fall back to midnight for routines created before the
-    // deadline was persisted (or if the meta row is missing).
-    final dayEnd = meta?.$3 ?? DateTime(now.year, now.month, now.day + 1);
-
-    // Cancel notifications for the old future blocks before they get
-    // replaced — otherwise stale Start/End alerts could fire for
-    // times that no longer match the recalculated routine.
-    final oldFuture = _blocks
-        .where((b) => b.status == BlockStatus.pending)
-        .toList();
-    await NotificationService.instance.cancelForBlocks(oldFuture);
-
-    final recalculated = RoutineEngine.recalculateFromCheckpoint(
-      currentBlocks: _blocks,
-      categories: widget.categories,
-      now: now,
-      dayEnd: dayEnd,
-      bufferMinutes: settings.bufferMinutes,
-    );
-
-    setState(() {
-      _blocks = recalculated;
-    });
-
-    // Checkpoint rewrites the whole future portion, so it's simplest
-    // to replace the day's rows wholesale rather than diff them.
-    await DatabaseService.instance.saveBlocksForDay(widget.day, recalculated);
-    await NotificationService.instance.scheduleForBlocks(recalculated);
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Checkpoint: future routine recalculated')),
-    );
+    if (_reviewing) return;
+    setState(() => _reviewing = true);
+    try {
+      await _pendingWrite;
+      if (_writeFailed) {
+        throw StateError('Reopen Today to reload saved block progress first.');
+      }
+      final settings = await _db.getSettings();
+      final meta = await _db.getDayMeta(widget.day);
+      if (!mounted) return;
+      final dayEnd = _deadline(meta?.$3);
+      final report = CheckpointReport.fromBlocks(blocks: _blocks,
+        categories: widget.categories.where((c) => c.enabled).toList(),
+        now: _now, dayEnd: dayEnd);
+      final id = '${widget.day}-${DateTime.now().microsecondsSinceEpoch}';
+      DateTime? previewedAt;
+      final saved = await Navigator.push<bool>(context, MaterialPageRoute(
+        builder: (_) => CheckpointScreen(
+          report: report,
+          previewFuture: () {
+            previewedAt = _now;
+            return RoutineEngine.recalculateFromCheckpoint(
+              currentBlocks: _blocks, categories: widget.categories,
+              now: previewedAt!, dayEnd: dayEnd,
+              bufferMinutes: settings.bufferMinutes);
+          },
+          save: (assessments, note, proposed) async {
+            // Never silently apply a different plan than the one previewed.
+            if (proposed != null && (previewedAt == null ||
+                _now.difference(previewedAt!).inSeconds >= 60 ||
+                (_now.isAfter(dayEnd) && previewedAt!.isBefore(dayEnd)))) {
+              throw StateError('Preview expired. Go back and preview again.');
+            }
+            final oldFuture = _blocks.where((b) => b.status == BlockStatus.pending).toList();
+            await _db.saveCheckpoint(id: id, day: widget.day, report: report,
+              assessments: assessments, note: note, proposed: proposed);
+            if (mounted) {
+              setState(() {
+                _reviewCount = (_reviewCount ?? 0) + 1;
+                if (proposed != null) _blocks = proposed;
+              });
+            }
+            if (proposed != null) {
+              try {
+                await NotificationService.instance.cancelForBlocks(oldFuture);
+                await NotificationService.instance.scheduleForBlocks(proposed);
+              } catch (_) {
+                _showError('Review and plan saved, but reminders could not be updated.');
+              }
+            }
+          },
+        ),
+      ));
+      if (saved == true) await _refreshCheckpoints();
+    } catch (error) {
+      _showError('Could not open checkpoint. $error');
+    } finally {
+      if (mounted) setState(() => _reviewing = false);
+    }
   }
 
   @override
@@ -272,13 +356,26 @@ class _TodayScreenState extends State<TodayScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            tooltip: 'Checkpoint / Recalculate',
-            onPressed: _runCheckpoint,
+            tooltip: 'Review checkpoint',
+            onPressed: _reviewing ? null : _runCheckpoint,
           ),
         ],
       ),
       body: Column(
         children: [
+          ListTile(
+            leading: const Icon(Icons.fact_check_outlined),
+            title: Text(_reviewCount == null ? 'Saved reviews' : 'Saved reviews: $_reviewCount'),
+            subtitle: Text(_checkpointError ?? 'Reminder times are not completed reviews'),
+            onTap: () {
+              if (_checkpointError != null) {
+                unawaited(_refreshCheckpoints());
+                return;
+              }
+              Navigator.push(context, MaterialPageRoute<void>(builder: (_) =>
+                CheckpointHistoryScreen(day: widget.day, database: _db)));
+            },
+          ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: Row(

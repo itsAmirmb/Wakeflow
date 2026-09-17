@@ -159,6 +159,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Future<void> _addCheckpointTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.now(),
+    );
+    if (!mounted || picked == null) return;
+    final minute = picked.hour * 60 + picked.minute;
+    final times = {..._settings.checkpointMinutesOfDay, minute}.toList()
+      ..sort();
+    await _saveSettings(_settings.copyWith(checkpointMinutesOfDay: times));
+  }
+
   @override
   Widget build(BuildContext context) {
     final categories = _categories;
@@ -241,6 +253,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
               'change the wake time. Daily reminders while the app stays closed '
               'are not supported yet. Reopen after changing timezones. '
               'Without exact-alarm access, delivery may be delayed.',
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.fact_check_outlined),
+            title: const Text('Checkpoint reminders'),
+            subtitle: const Text('Fixed times of day'),
+            trailing: IconButton(
+              tooltip: 'Add checkpoint time',
+              onPressed: _addCheckpointTime,
+              icon: const Icon(Icons.add),
+            ),
+          ),
+          if (_settings.checkpointMinutesOfDay.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: Text('No checkpoint times selected.'),
+            ),
+          ..._settings.checkpointMinutesOfDay.map((minute) {
+            final time = TimeOfDay(hour: minute ~/ 60, minute: minute % 60);
+            return ListTile(
+              title: Text(time.format(context)),
+              trailing: IconButton(
+                tooltip: 'Remove checkpoint time',
+                key: ValueKey('remove-checkpoint-$minute'),
+                icon: const Icon(Icons.remove_circle_outline),
+                onPressed: () => _saveSettings(
+                  _settings.copyWith(
+                    checkpointMinutesOfDay: _settings.checkpointMinutesOfDay
+                        .where((value) => value != minute)
+                        .toList(),
+                  ),
+                ),
+              ),
+            );
+          }),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              'Schedule updates when you open Today. Reminders only occur '
+              'between wake time and the routine deadline and ask you to open '
+              'Today to review your progress. Delivery may be delayed without '
+              'exact-alarm access.',
             ),
           ),
           if (_saving) const LinearProgressIndicator(),

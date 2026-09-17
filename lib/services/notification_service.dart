@@ -93,15 +93,23 @@ class NotificationService {
   static String _payload(String blockId, bool end) =>
       jsonEncode(['wakeflow-block-v1', blockId, end ? 'end' : 'start']);
 
-  Future<int> _id(String blockId, {required bool end}) async {
+  Future<int> _id(String blockId, {required bool end}) => _allocateId(
+    _payload(blockId, end),
+    blockNotificationId(blockId, end: end),
+    end: end,
+  );
+
+  Future<int> _allocateId(
+    String payload,
+    int candidate, {
+    bool end = false,
+  }) async {
     final pending = await _plugin.pendingNotificationRequests();
-    final payload = _payload(blockId, end);
     for (final request in pending) {
       if (request.payload == payload) return request.id;
     }
     final occupied = pending.map((request) => request.id).toSet();
     final base = end ? 2 + _rangeSize : 2;
-    var candidate = blockNotificationId(blockId, end: end);
     for (var attempts = 0; attempts < _rangeSize; attempts++) {
       if (!occupied.contains(candidate)) return candidate;
       candidate = base + (candidate - base + 1) % _rangeSize;
@@ -233,6 +241,109 @@ class NotificationService {
         (elapsed.isNegative ? Duration.zero : elapsed);
     return remaining > Duration.zero ? now.add(remaining) : null;
   }
+
+  /// Future local clock occurrences in this routine, including wake time but
+  /// excluding now and the deadline. Calendar construction handles midnight
+  /// and uses the device's offset at each target date (not fixed 24h jumps).
+  @visibleForTesting
+  static List<DateTime> checkpointOccurrences({
+    required DateTime wakeTime,
+    required DateTime dayEnd,
+    required List<int> minutesOfDay,
+    required DateTime now,
+  }) {
+    final minutes = minutesOfDay.toSet().toList()..sort();
+    for (final minute in minutes) {
+      RangeError.checkValueInInterval(minute, 0, 1439, 'minutesOfDay');
+    }
+    final wake = wakeTime.toLocal();
+    final end = dayEnd.toLocal();
+    final occurrences = <DateTime>[];
+    if (minutes.isEmpty || !end.isAfter(wake)) return occurrences;
+    var date = DateTime(wake.year, wake.month, wake.day);
+    while (date.isBefore(end)) {
+      for (final minute in minutes) {
+        final when = DateTime(
+          date.year,
+          date.month,
+          date.day,
+          minute ~/ 60,
+          minute % 60,
+        );
+        if (!when.isBefore(wake) && when.isAfter(now) && when.isBefore(end)) {
+          occurrences.add(when);
+        }
+      }
+      date = DateTime(date.year, date.month, date.day + 1);
+    }
+    // DST clock normalization can map two wall times onto one instant.
+    return occurrences.toSet().toList()..sort();
+  }
+
+  static const _checkpointPayloadTag = 'wakeflow-checkpoint-v1';
+
+  Future<void> _cancelCheckpoints(String day) async {
+    for (final request in await _plugin.pendingNotificationRequests()) {
+      final payload = request.payload;
+      if (payload == null) continue;
+      Object? decoded;
+      try {
+        decoded = jsonDecode(payload);
+      } on FormatException {
+        continue;
+      }
+      if (decoded is List &&
+          decoded.length == 3 &&
+          decoded[0] == _checkpointPayloadTag &&
+          decoded[1] == day) {
+        await _plugin.cancel(request.id);
+      }
+    }
+  }
+
+  /// Replaces reminders for this routine only, including removing stale times
+  /// when the list is empty or the routine is over. Other routines, block and
+  /// wake reminders are untouched. Errors propagate after persistence succeeds.
+  /// IDs share the collision-checked allocator; no existing pending ID is reused
+  /// unless its complete payload matches. Each payload carries day and ISO time.
+  Future<void> scheduleCheckpointReminders({
+    required String day,
+    required DateTime wakeTime,
+    required DateTime dayEnd,
+    required List<int> minutesOfDay,
+  }) => _serial(() async {
+    final occurrences = checkpointOccurrences(
+      wakeTime: wakeTime,
+      dayEnd: dayEnd,
+      minutesOfDay: minutesOfDay,
+      now: _now(),
+    );
+    await init();
+    await _cancelCheckpoints(day);
+    for (final when in occurrences) {
+      final payload = jsonEncode([
+        _checkpointPayloadTag,
+        day,
+        when.toIso8601String(),
+      ]);
+      await _schedule(
+        id: await _allocateId(
+          payload,
+          blockNotificationId(payload, end: false),
+        ),
+        title: 'Checkpoint reminder',
+        body: 'Open Today to review your progress.',
+        when: when,
+        payload: payload,
+      );
+    }
+  });
+
+  Future<void> cancelCheckpointReminders({required String day}) =>
+      _serial(() async {
+        await init();
+        await _cancelCheckpoints(day);
+      });
 
   /// Next occurrence only, renewed on launch or wake-time edit. No UTC repeat:
   /// a device IANA zone/native timezone integration is needed for true daily
