@@ -122,7 +122,10 @@ class _DayModeScreenState extends State<DayModeScreen> {
                       const SizedBox(height: 8),
                       Text(
                         'Woke up at ${widget.wakeTime.hour}:${widget.wakeTime.minute.toString().padLeft(2, '0')}',
-                        style: const TextStyle(fontSize: 14, color: Colors.grey),
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ],
                   ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/stats_service.dart';
 import '../services/day_key.dart';
+import '../widgets/empty_state.dart';
 
 class StatsScreen extends StatefulWidget {
   const StatsScreen({super.key});
@@ -79,7 +80,10 @@ class _DailyStatsView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (stats.isEmpty) {
-      return const Center(child: Text('No routine generated for today yet.'));
+      return const EmptyState(
+        icon: Icons.wb_sunny_outlined,
+        message: 'No routine generated for today yet.',
+      );
     }
 
     return ListView(
@@ -108,20 +112,20 @@ class _WeeklyStatsView extends StatelessWidget {
   Widget build(BuildContext context) {
     final hasAnyData = stats.plannedMinutes > 0;
 
+    if (!hasAnyData) {
+      return const EmptyState(
+        icon: Icons.bar_chart_outlined,
+        message: 'No routines generated in the last 7 days yet.',
+      );
+    }
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        if (!hasAnyData)
-          const Padding(
-            padding: EdgeInsets.only(bottom: 16),
-            child: Text('No routines generated in the last 7 days yet.'),
-          )
-        else ...[
-          _WeekOverviewCard(stats: stats),
-          const SizedBox(height: 16),
-          for (final stat in stats.categoryStats)
-            if (stat.plannedMinutes > 0) _CategoryStatCard(stat: stat),
-        ],
+        _WeekOverviewCard(stats: stats),
+        const SizedBox(height: 16),
+        for (final stat in stats.categoryStats)
+          if (stat.plannedMinutes > 0) _CategoryStatCard(stat: stat),
       ],
     );
   }
@@ -209,7 +213,13 @@ class _StatColumn extends StatelessWidget {
     return Column(
       children: [
         Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-        Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
       ],
     );
   }
@@ -241,17 +251,26 @@ class _CategoryStatCard extends StatelessWidget {
                 ),
                 Text(
                   '${_formatMinutes(stat.completedMinutes)} / ${_formatMinutes(stat.plannedMinutes)}',
-                  style: TextStyle(color: Colors.grey[700]),
+                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                 ),
               ],
             ),
             const SizedBox(height: 8),
-            LinearProgressIndicator(value: stat.completionRatio.clamp(0, 1)),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: stat.completionRatio.clamp(0, 1),
+                minHeight: 8,
+              ),
+            ),
             if (stat.skippedBlocks > 0) ...[
               const SizedBox(height: 4),
               Text(
                 '${stat.skippedBlocks} skipped',
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ],
           ],
