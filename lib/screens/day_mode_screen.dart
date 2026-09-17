@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/day_mode.dart';
 import '../models/category.dart';
+import '../models/routine_target.dart';
 import '../widgets/category_card.dart';
 import '../services/routine_engine.dart';
 import '../services/database_service.dart';
@@ -11,11 +12,13 @@ import 'today_screen.dart';
 class DayModeScreen extends StatefulWidget {
   final DayMode dayMode;
   final DateTime wakeTime;
+  final RoutineTarget target;
 
   const DayModeScreen({
     super.key,
     required this.dayMode,
     required this.wakeTime,
+    required this.target,
   });
 
   @override
@@ -24,16 +27,21 @@ class DayModeScreen extends StatefulWidget {
 
 class _DayModeScreenState extends State<DayModeScreen> {
   List<Category>? _categories;
+  int _bufferMinutes = 10;
 
   @override
   void initState() {
     super.initState();
-    _loadCategories();
+    _loadData();
   }
 
-  Future<void> _loadCategories() async {
+  Future<void> _loadData() async {
     final categories = await DatabaseService.instance.getCategories();
-    setState(() => _categories = categories);
+    final settings = await DatabaseService.instance.getSettings();
+    setState(() {
+      _categories = categories;
+      _bufferMinutes = settings.bufferMinutes;
+    });
   }
 
   Future<void> _generateRoutine(BuildContext context) async {
@@ -42,12 +50,11 @@ class _DayModeScreenState extends State<DayModeScreen> {
 
     final wakeTime = widget.wakeTime;
 
-    // Fixed day end: midnight, per spec example in §6.
-    final dayEnd = DateTime(wakeTime.year, wakeTime.month, wakeTime.day + 1);
-    final totalMinutes = dayEnd.difference(wakeTime).inMinutes;
-
-    // No fixed events yet (Phase-later); flat 10-minute buffer per §15 example.
-    const bufferMinutes = 10;
+    // Usable time is bounded by whichever mode the user picked on the
+    // Wake screen: a fixed clock time to finish by, or a fixed total
+    // duration from wake time.
+    final totalMinutes = widget.target.totalMinutesFrom(wakeTime);
+    final bufferMinutes = _bufferMinutes;
 
     final usableMinutes = RoutineEngine.calculateUsableMinutes(
       totalMinutes: totalMinutes,

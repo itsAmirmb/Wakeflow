@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'screens/home_screen.dart';
 import 'services/notification_service.dart';
+import 'services/database_service.dart';
 
 void main() async {
   // Required before any plugin (sqflite, notifications) is used prior to runApp.
@@ -8,7 +9,12 @@ void main() async {
 
   await NotificationService.instance.init();
   await NotificationService.instance.requestPermissions();
-  await NotificationService.instance.scheduleWakeReminder();
+
+  final settings = await DatabaseService.instance.getSettings();
+  await NotificationService.instance.scheduleWakeReminder(
+    hour: settings.wakeReminderHour,
+    minute: settings.wakeReminderMinute,
+  );
 
   runApp(const WakeFlowApp());
 }

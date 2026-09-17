@@ -169,6 +169,7 @@ class _TodayScreenState extends State<TodayScreen> {
   Future<void> _runCheckpoint() async {
     final now = DateTime.now();
     final dayEnd = DateTime(now.year, now.month, now.day + 1);
+    final settings = await DatabaseService.instance.getSettings();
 
     // Cancel notifications for the old future blocks before they get
     // replaced — otherwise stale Start/End alerts could fire for
@@ -182,7 +183,7 @@ class _TodayScreenState extends State<TodayScreen> {
       categories: widget.categories,
       now: now,
       dayEnd: dayEnd,
-      bufferMinutes: 10,
+      bufferMinutes: settings.bufferMinutes,
     );
 
     setState(() {

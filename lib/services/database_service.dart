@@ -4,6 +4,7 @@ import 'package:sqflite/sqflite.dart';
 import '../models/block.dart';
 import '../models/category.dart';
 import '../models/day_mode.dart';
+import '../models/app_settings.dart';
 import '../data/default_categories.dart';
 
 /// Thin wrapper around a single sqflite database.
@@ -31,7 +32,7 @@ class DatabaseService {
 
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE categories (
@@ -66,6 +67,7 @@ class DatabaseService {
         await db.execute('CREATE INDEX idx_blocks_day ON blocks(day)');
 
         await _createDayMetaTable(db);
+        await _createSettingsTable(db);
 
         // Seed categories on first run so the app always has something
         // to allocate time against.
@@ -82,6 +84,10 @@ class DatabaseService {
         if (oldVersion < 2) {
           await _createDayMetaTable(db);
         }
+        // v2 -> v3: added settings (buffer minutes, wake reminder time).
+        if (oldVersion < 3) {
+          await _createSettingsTable(db);
+        }
       },
     );
   }
@@ -95,6 +101,17 @@ class DatabaseService {
         day TEXT PRIMARY KEY,
         dayMode TEXT NOT NULL,
         wakeTime TEXT NOT NULL
+      )
+    ''');
+  }
+
+  Future<void> _createSettingsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS settings (
+        id INTEGER PRIMARY KEY,
+        bufferMinutes INTEGER NOT NULL,
+        wakeReminderHour INTEGER NOT NULL,
+        wakeReminderMinute INTEGER NOT NULL
       )
     ''');
   }
@@ -115,6 +132,11 @@ class DatabaseService {
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
+
+  /// Alias kept explicit for Settings-screen call sites — same
+  /// insert-or-replace as saveCategory, used when editing an existing
+  /// category rather than seeding a new one.
+  Future<void> updateCategory(Category category) => saveCategory(category);
 
   // ---------- Blocks ----------
 
@@ -200,5 +222,28 @@ class DatabaseService {
       orderBy: 'day DESC',
     );
     return rows.map((r) => r['day'] as String).toList();
+  }
+
+  // ---------- Settings ----------
+
+  Future<AppSettings> getSettings() async {
+    final db = await database;
+    final rows = await db.query('settings', where: 'id = 0');
+    if (rows.isEmpty) {
+      // No row yet (first run) — return defaults without writing,
+      // saveSettings() will create the row the first time the user
+      // actually changes something.
+      return const AppSettings();
+    }
+    return AppSettings.fromMap(rows.first);
+  }
+
+  Future<void> saveSettings(AppSettings settings) async {
+    final db = await database;
+    await db.insert(
+      'settings',
+      settings.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 }

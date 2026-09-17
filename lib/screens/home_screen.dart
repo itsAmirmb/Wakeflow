@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'wake_screen.dart';
 import 'today_screen.dart';
+import 'settings_screen.dart';
 import '../services/database_service.dart';
 import '../services/day_key.dart';
 
@@ -13,6 +14,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool _checking = true;
+  int _tabIndex = 0;
 
   @override
   void initState() {
@@ -65,31 +67,45 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
+    final body = _tabIndex == 0 ? _buildHomeTab(context) : const SettingsScreen();
+
     return Scaffold(
-      appBar: AppBar(title: const Text('WakeFlow')),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text(
-              'Good morning 👋',
-              style: TextStyle(fontSize: 22),
+      appBar: AppBar(title: Text(_tabIndex == 0 ? 'WakeFlow' : 'Settings')),
+      body: body,
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tabIndex,
+        onDestinationSelected: (index) => setState(() => _tabIndex = index),
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
+          NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'Settings'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHomeTab(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Text(
+            'Good morning 👋',
+            style: TextStyle(fontSize: 22),
+          ),
+          const SizedBox(height: 32),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const WakeScreen()),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
             ),
-            const SizedBox(height: 32),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const WakeScreen()),
-                );
-              },
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-              ),
-              child: const Text('Start Day', style: TextStyle(fontSize: 18)),
-            ),
-          ],
-        ),
+            child: const Text('Start Day', style: TextStyle(fontSize: 18)),
+          ),
+        ],
       ),
     );
   }
