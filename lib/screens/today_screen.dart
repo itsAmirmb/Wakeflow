@@ -17,12 +17,16 @@ class TodayScreen extends StatefulWidget {
   final String day; // yyyy-MM-dd this routine belongs to
   final List<Category> categories;
 
+  /// Optional persistence boundary for embedding and widget tests.
+  final Future<void> Function(Block block)? persistBlock;
+
   const TodayScreen({
     super.key,
     required this.dayMode,
     required this.blocks,
     required this.day,
     required this.categories,
+    this.persistBlock,
   });
 
   @override
@@ -36,7 +40,7 @@ class _TodayScreenState extends State<TodayScreen> {
   @override
   void initState() {
     super.initState();
-    _blocks = widget.blocks;
+    _blocks = List<Block>.of(widget.blocks);
     // If a block was already running when the app was closed, resume
     // ticking so the on-screen timer keeps advancing.
     final current = _currentBlock;
@@ -68,6 +72,10 @@ class _TodayScreenState extends State<TodayScreen> {
   /// stale Start/End notification doesn't fire after the user already
   /// acted on the block manually).
   Future<void> _persist(Block block) async {
+    if (widget.persistBlock != null) {
+      await widget.persistBlock!(block);
+      return;
+    }
     await DatabaseService.instance.updateBlock(widget.day, block);
     await NotificationService.instance.cancelForBlock(block.id);
   }
@@ -86,6 +94,13 @@ class _TodayScreenState extends State<TodayScreen> {
 
   void _stopTicking() {
     _timer?.cancel();
+  }
+
+  // AnimatedSwitcher retains outgoing panels during the transition. Their
+  // callbacks must never act on a newer state (even for the same block ID).
+  void _actOn(Block expected, VoidCallback action) {
+    if (!mounted || !identical(_currentBlock, expected)) return;
+    action();
   }
 
   void _startCurrent() {
@@ -274,11 +289,11 @@ class _TodayScreenState extends State<TodayScreen> {
                 ? _CurrentBlockPanel(
                     key: ValueKey('${currentBlock.id}-${currentBlock.status}'),
                     block: currentBlock,
-                    onStart: _startCurrent,
-                    onPause: _pauseCurrent,
-                    onResume: _resumeCurrent,
-                    onComplete: _completeCurrent,
-                    onSkip: _skipCurrent,
+                    onStart: () => _actOn(currentBlock, _startCurrent),
+                    onPause: () => _actOn(currentBlock, _pauseCurrent),
+                    onResume: () => _actOn(currentBlock, _resumeCurrent),
+                    onComplete: () => _actOn(currentBlock, _completeCurrent),
+                    onSkip: () => _actOn(currentBlock, _skipCurrent),
                   )
                 : const _DayCompletePanel(key: ValueKey('day-complete')),
           ),
