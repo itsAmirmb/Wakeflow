@@ -5,6 +5,7 @@ import '../models/block.dart';
 import '../models/category.dart';
 import '../services/routine_engine.dart';
 import '../services/database_service.dart';
+import '../services/notification_service.dart';
 
 class TodayScreen extends StatefulWidget {
   final DayMode dayMode;
@@ -58,10 +59,13 @@ class _TodayScreenState extends State<TodayScreen> {
     return index == -1 ? null : _blocks[index];
   }
 
-  /// Writes a single block's current state to the DB. Called after
-  /// every status change so progress survives closing the app.
-  Future<void> _persist(Block block) {
-    return DatabaseService.instance.updateBlock(widget.day, block);
+  /// Writes a single block's current state to the DB, and cancels its
+  /// scheduled notifications now that it's no longer pending (so a
+  /// stale Start/End notification doesn't fire after the user already
+  /// acted on the block manually).
+  Future<void> _persist(Block block) async {
+    await DatabaseService.instance.updateBlock(widget.day, block);
+    await NotificationService.instance.cancelForBlock(block.id);
   }
 
   void _startTicking() {
@@ -166,6 +170,13 @@ class _TodayScreenState extends State<TodayScreen> {
     final now = DateTime.now();
     final dayEnd = DateTime(now.year, now.month, now.day + 1);
 
+    // Cancel notifications for the old future blocks before they get
+    // replaced — otherwise stale Start/End alerts could fire for
+    // times that no longer match the recalculated routine.
+    final oldFuture =
+        _blocks.where((b) => b.status == BlockStatus.pending).toList();
+    await NotificationService.instance.cancelForBlocks(oldFuture);
+
     final recalculated = RoutineEngine.recalculateFromCheckpoint(
       currentBlocks: _blocks,
       categories: widget.categories,
@@ -181,6 +192,7 @@ class _TodayScreenState extends State<TodayScreen> {
     // Checkpoint rewrites the whole future portion, so it's simplest
     // to replace the day's rows wholesale rather than diff them.
     await DatabaseService.instance.saveBlocksForDay(widget.day, recalculated);
+    await NotificationService.instance.scheduleForBlocks(recalculated);
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(

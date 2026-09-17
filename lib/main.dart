@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'screens/home_screen.dart';
+import 'services/notification_service.dart';
 
-void main() {
-  // Required before any plugin (sqflite included) is used prior to runApp.
+void main() async {
+  // Required before any plugin (sqflite, notifications) is used prior to runApp.
   WidgetsFlutterBinding.ensureInitialized();
+
+  await NotificationService.instance.init();
+  await NotificationService.instance.requestPermissions();
+  await NotificationService.instance.scheduleWakeReminder();
+
   runApp(const WakeFlowApp());
 }
 

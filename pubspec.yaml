@@ -40,6 +40,11 @@ dependencies:
   # Needed by sqflite to locate the database file on device
   path: ^1.9.0
 
+  # Local notifications for Block Start/End and the Wake Check reminder
+  flutter_local_notifications: ^18.0.1
+  # zonedSchedule (exact-time scheduling) needs TZDateTime, not DateTime
+  timezone: ^0.9.4
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

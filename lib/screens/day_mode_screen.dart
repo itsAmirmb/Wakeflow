@@ -5,6 +5,7 @@ import '../widgets/category_card.dart';
 import '../services/routine_engine.dart';
 import '../services/database_service.dart';
 import '../services/day_key.dart';
+import '../services/notification_service.dart';
 import 'today_screen.dart';
 
 class DayModeScreen extends StatefulWidget {
@@ -77,6 +78,7 @@ class _DayModeScreenState extends State<DayModeScreen> {
       wakeTime: wakeTime,
     );
     await DatabaseService.instance.saveBlocksForDay(today, placedBlocks);
+    await NotificationService.instance.scheduleForBlocks(placedBlocks);
 
     if (!context.mounted) return;
     Navigator.push(
