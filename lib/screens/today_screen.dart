@@ -13,6 +13,7 @@ import '../services/routine_engine.dart';
 import '../services/database_service.dart';
 import '../services/notification_service.dart';
 import '../widgets/block_status_style.dart';
+import '../widgets/circular_timer.dart';
 import '../widgets/empty_state.dart';
 
 class TodayScreen extends StatefulWidget {
@@ -574,16 +575,15 @@ class _CurrentBlockPanel extends StatelessWidget {
             style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             textAlign: TextAlign.center,
           ),
-          if (showTimer) ...[
-            const SizedBox(height: 8),
-            Text(
-              _formatElapsed(block.elapsedAt(DateTime.now())),
-              style: const TextStyle(
-                fontSize: 32,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
-          ],
+          const SizedBox(height: 12),
+          CircularTimer(
+            elapsed: showTimer
+                ? block.elapsedAt(DateTime.now())
+                : Duration.zero,
+            planned: Duration(minutes: block.plannedDurationMinutes),
+            status: block.status,
+            size: MediaQuery.sizeOf(context).height < 640 ? 120 : 160,
+          ),
           const SizedBox(height: 16),
           Row(
             children: [
@@ -666,11 +666,5 @@ class _CurrentBlockPanel extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  String _formatElapsed(Duration d) {
-    final minutes = d.inMinutes.toString().padLeft(2, '0');
-    final seconds = (d.inSeconds % 60).toString().padLeft(2, '0');
-    return '$minutes:$seconds';
   }
 }
