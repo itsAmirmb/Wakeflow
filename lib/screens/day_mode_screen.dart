@@ -4,7 +4,7 @@ import '../models/block.dart';
 import '../models/day_mode.dart';
 import '../models/category.dart';
 import '../models/routine_target.dart';
-import '../widgets/category_card.dart';
+import '../widgets/category_editor.dart';
 import '../services/routine_engine.dart';
 import '../services/database_service.dart';
 import '../services/day_key.dart';
@@ -28,6 +28,8 @@ class DayModeScreen extends StatefulWidget {
 }
 
 class _DayModeScreenState extends State<DayModeScreen> {
+  // Editable draft, in plan order. Changes are saved when the routine is
+  // generated (not while editing), so backing out discards them.
   List<Category>? _categories;
   int _bufferMinutes = 10;
 
@@ -40,15 +42,46 @@ class _DayModeScreenState extends State<DayModeScreen> {
   Future<void> _loadData() async {
     final categories = await DatabaseService.instance.getCategories();
     final settings = await DatabaseService.instance.getSettings();
+    if (!mounted) return;
     setState(() {
-      _categories = categories;
+      _categories = List<Category>.of(categories);
       _bufferMinutes = settings.bufferMinutes;
     });
   }
 
+  void _updateCategory(int index, Category category) {
+    setState(() => _categories![index] = category);
+  }
+
+  void _reorder(int oldIndex, int newIndex) {
+    setState(() {
+      if (newIndex > oldIndex) newIndex -= 1;
+      final moved = _categories!.removeAt(oldIndex);
+      _categories!.insert(newIndex, moved);
+    });
+  }
+
   Future<void> _generateRoutine(BuildContext context) async {
-    final categories = _categories;
-    if (categories == null) return;
+    final draft = _categories;
+    if (draft == null) return;
+    // Order is stored as priority, so the Settings tab and later days show
+    // the same order the routine is built in.
+    final categories = [
+      for (var i = 0; i < draft.length; i++) draft[i].copyWith(priority: i + 1),
+    ];
+    if (!categories.any((c) => c.enabled)) return;
+    try {
+      await DatabaseService.instance.saveCategories(categories);
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not save category changes. Please try again.'),
+          ),
+        );
+      }
+      return;
+    }
 
     final wakeTime = widget.wakeTime;
 
@@ -174,17 +207,65 @@ class _DayModeScreenState extends State<DayModeScreen> {
                   ),
                 ),
                 const Divider(),
-                Expanded(
-                  child: ListView(
-                    children: categories
-                        .map((category) => CategoryCard(category: category))
-                        .toList(),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    'Drag to reorder · the order is the order of your blocks. '
+                    'Changes are saved as your category settings.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
+                Expanded(
+                  child: ReorderableListView.builder(
+                    buildDefaultDragHandles: false,
+                    padding: const EdgeInsets.only(top: 8, bottom: 8),
+                    itemCount: categories.length,
+                    onReorder: _reorder,
+                    itemBuilder: (context, index) {
+                      final category = categories[index];
+                      return Card(
+                        key: ValueKey(category.id),
+                        child: Opacity(
+                          opacity: category.enabled ? 1 : 0.55,
+                          child: Row(
+                            children: [
+                              ReorderableDragStartListener(
+                                index: index,
+                                child: const Padding(
+                                  padding: EdgeInsets.fromLTRB(12, 8, 4, 8),
+                                  child: Icon(Icons.drag_handle),
+                                ),
+                              ),
+                              Expanded(
+                                child: CategoryEditorTile(
+                                  category: category,
+                                  onChanged: (updated) =>
+                                      _updateCategory(index, updated),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                if (!categories.any((c) => c.enabled))
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Text(
+                      'Enable at least one category to generate a routine.',
+                      style: TextStyle(color: Theme.of(context).colorScheme.error),
+                    ),
+                  ),
                 Padding(
                   padding: const EdgeInsets.all(16.0),
                   child: ElevatedButton(
-                    onPressed: () => _generateRoutine(context),
+                    onPressed: categories.any((c) => c.enabled)
+                        ? () => _generateRoutine(context)
+                        : null,
                     style: ElevatedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 40,

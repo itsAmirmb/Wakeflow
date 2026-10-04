@@ -273,6 +273,23 @@ class DatabaseService {
     );
   }
 
+  /// Saves several categories atomically (used when Start Day persists the
+  /// edited order, enabled flags and sliders in one go).
+  Future<void> saveCategories(List<Category> categories) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      final batch = txn.batch();
+      for (final category in categories) {
+        batch.insert(
+          'categories',
+          category.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+      await batch.commit(noResult: true);
+    });
+  }
+
   /// Alias kept explicit for Settings-screen call sites — same
   /// insert-or-replace as saveCategory, used when editing an existing
   /// category rather than seeding a new one.
