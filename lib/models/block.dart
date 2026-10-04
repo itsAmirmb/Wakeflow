@@ -58,6 +58,17 @@ class Block {
     return Duration(seconds: accumulatedSeconds) + running;
   }
 
+  /// Real time spent on the timer for a finished block. Older rows without
+  /// stored seconds fall back to their start/end timestamps.
+  int get recordedSeconds {
+    if (accumulatedSeconds > 0) return accumulatedSeconds;
+    if (actualStart != null && actualEnd != null) {
+      final seconds = actualEnd!.difference(actualStart!).inSeconds;
+      return seconds > 0 ? seconds : 0;
+    }
+    return 0;
+  }
+
   Block copyWith({
     DateTime? plannedStart,
     DateTime? plannedEnd,

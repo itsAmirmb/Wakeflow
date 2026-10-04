@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../models/block.dart';
 import '../models/day_mode.dart';
 import '../models/category.dart';
 import '../models/routine_target.dart';
@@ -57,12 +58,39 @@ class _DayModeScreenState extends State<DayModeScreen> {
     final dayEnd = widget.target.endFrom(wakeTime);
     final today = dayKey(wakeTime);
 
-    final placedBlocks = RoutineEngine.generateRoutine(
-      categories: categories,
-      startTime: wakeTime,
-      dayEnd: dayEnd,
-      bufferMinutes: _bufferMinutes,
-    );
+    // Planning again on the same day (e.g. after Distill) must never wipe
+    // work that already happened: completed and partial blocks are kept and
+    // credited, and only the remaining time is planned.
+    var kept = <Block>[];
+    DateTime? originalWake;
+    try {
+      final db = DatabaseService.instance;
+      kept = (await db.getBlocksForDay(today))
+          .where(
+            (b) =>
+                b.status == BlockStatus.completed ||
+                b.status == BlockStatus.partial,
+          )
+          .toList();
+      originalWake = (await db.getDayMeta(today))?.$2;
+    } catch (_) {
+      kept = [];
+    }
+
+    final placedBlocks = kept.isEmpty
+        ? RoutineEngine.generateRoutine(
+            categories: categories,
+            startTime: wakeTime,
+            dayEnd: dayEnd,
+            bufferMinutes: _bufferMinutes,
+          )
+        : RoutineEngine.recalculateFromCheckpoint(
+            currentBlocks: kept,
+            categories: categories,
+            now: wakeTime,
+            dayEnd: dayEnd,
+            bufferMinutes: _bufferMinutes,
+          );
 
     // Metadata and blocks are written atomically so a crash can never
     // leave a half-registered day (resume relies on both agreeing).
@@ -72,7 +100,7 @@ class _DayModeScreenState extends State<DayModeScreen> {
       await DatabaseService.instance.saveDayRoutine(
         day: today,
         dayMode: widget.dayMode,
-        wakeTime: wakeTime,
+        wakeTime: originalWake ?? wakeTime,
         dayEnd: dayEnd,
         blocks: placedBlocks,
       );

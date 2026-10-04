@@ -50,6 +50,7 @@ class TodayScreen extends StatefulWidget {
 class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   late List<Block> _blocks;
   Timer? _timer;
+  AppSettings _settings = const AppSettings();
   bool _reviewing = false;
   bool _writeFailed = false;
   int? _reviewCount;
@@ -86,6 +87,30 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _loadSettings() async {
+    try {
+      final settings = await _db.getSettings();
+      if (mounted) setState(() => _settings = settings);
+    } catch (_) {
+      // Keep defaults; DONE then follows the default keep threshold.
+    }
+  }
+
+  /// DONE only unlocks once the timer recorded at least the keep threshold,
+  /// so a block can't be marked completed without real work behind it.
+  bool _canComplete(Block block) => _settings.isProgressKept(
+    elapsed: block.elapsedAt(DateTime.now()),
+    plannedMinutes: block.plannedDurationMinutes,
+  );
+
+  String _unlockHint(Block block) {
+    final t = _settings.keepThreshold(block.plannedDurationMinutes);
+    final text = t.inSeconds % 60 == 0
+        ? '${t.inMinutes} min'
+        : '${t.inMinutes.toString().padLeft(2, '0')}:${(t.inSeconds % 60).toString().padLeft(2, '0')}';
+    return 'DONE unlocks after $text on the timer';
+  }
+
   DateTime _deadline(DateTime? saved) {
     if (saved != null) return saved;
     final ends = _blocks.map((b) => b.plannedEnd).whereType<DateTime>().toList()..sort();
@@ -96,7 +121,10 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) unawaited(_refreshCheckpoints());
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshCheckpoints());
+      unawaited(_loadSettings());
+    }
   }
 
   @override
@@ -105,6 +133,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     _blocks = List<Block>.of(widget.blocks);
     WidgetsBinding.instance.addObserver(this);
     unawaited(_refreshCheckpoints());
+    unawaited(_loadSettings());
     // If a block was already running when the app was closed, resume
     // ticking so the on-screen timer keeps advancing.
     final current = _currentBlock;
@@ -253,6 +282,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   void _completeCurrent() {
     final index = _currentIndex;
     if (index == -1) return;
+    if (!_canComplete(_blocks[index])) return;
     _stopTicking();
     final block = _blocks[index];
     final updated = block.copyWith(
@@ -426,6 +456,8 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
                     onPause: () => _actOn(currentBlock, _pauseCurrent),
                     onResume: () => _actOn(currentBlock, _resumeCurrent),
                     onComplete: () => _actOn(currentBlock, _completeCurrent),
+                    canComplete: _canComplete(currentBlock),
+                    completeHint: _unlockHint(currentBlock),
                     onSkip: () => _actOn(currentBlock, _skipCurrent),
                   )
                 : const _DayCompletePanel(key: ValueKey('day-complete')),
@@ -480,9 +512,26 @@ class _BlockTile extends StatelessWidget {
                 : null,
           ),
         ),
-        subtitle: Text('${block.plannedDurationMinutes}m · ${style.label}'),
+        subtitle: Text(_subtitle(style.label)),
       ),
     );
+  }
+
+  /// Finished blocks show the time the timer really recorded, not just the
+  /// planned length.
+  String _subtitle(String label) {
+    final recorded = block.recordedSeconds;
+    final finished =
+        block.status == BlockStatus.completed ||
+        block.status == BlockStatus.partial ||
+        block.status == BlockStatus.skipped;
+    if (!finished || recorded <= 0) {
+      return '${block.plannedDurationMinutes}m · $label';
+    }
+    final active = recorded >= 60 ? '${recorded ~/ 60} min' : '$recorded s';
+    return block.status == BlockStatus.partial
+        ? '$active on timer · $label'
+        : '${block.plannedDurationMinutes}m planned · $active on timer · $label';
   }
 
   String _formatTime(DateTime? time) {
@@ -525,6 +574,8 @@ class _CurrentBlockPanel extends StatelessWidget {
   final VoidCallback onResume;
   final VoidCallback onComplete;
   final VoidCallback onSkip;
+  final bool canComplete;
+  final String completeHint;
 
   const _CurrentBlockPanel({
     super.key,
@@ -534,6 +585,8 @@ class _CurrentBlockPanel extends StatelessWidget {
     required this.onResume,
     required this.onComplete,
     required this.onSkip,
+    required this.canComplete,
+    required this.completeHint,
   });
 
   @override
@@ -617,7 +670,7 @@ class _CurrentBlockPanel extends StatelessWidget {
                     button: true,
                     label: 'Mark ${block.title} as complete',
                     child: ElevatedButton.icon(
-                      onPressed: onComplete,
+                      onPressed: canComplete ? onComplete : null,
                       icon: const Icon(Icons.check),
                       label: const Text('DONE'),
                     ),
@@ -654,7 +707,7 @@ class _CurrentBlockPanel extends StatelessWidget {
                     button: true,
                     label: 'Mark ${block.title} as complete',
                     child: ElevatedButton.icon(
-                      onPressed: onComplete,
+                      onPressed: canComplete ? onComplete : null,
                       icon: const Icon(Icons.check),
                       label: const Text('DONE'),
                     ),
@@ -663,6 +716,16 @@ class _CurrentBlockPanel extends StatelessWidget {
               ],
             ],
           ),
+          if (showTimer && !canComplete) ...[
+            const SizedBox(height: 8),
+            Text(
+              completeHint,
+              style: TextStyle(
+                fontSize: 12,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ],
         ],
       ),
     );

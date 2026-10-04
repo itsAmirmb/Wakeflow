@@ -119,13 +119,10 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  String _hm(DateTime t) =>
-      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-
   /// Distillation: keep the real work done today (completed blocks and
-  /// unfinished ones above the user's threshold) and re-plan everything else
-  /// up to the day's deadline. Discarded blocks are removed, so stats only
-  /// reflect work that actually happened.
+  /// unfinished ones above the user's threshold) and drop everything else.
+  /// Discarded blocks are removed, so stats only reflect work that actually
+  /// happened. Planning the rest of the day is left to Start Day.
   Future<void> _distill() async {
     if (_opening || _distilling) return;
     setState(() => _distilling = true);
@@ -138,7 +135,6 @@ class _HomeScreenState extends State<HomeScreen> {
         await _checkForTodayRoutine();
         return;
       }
-      final categories = await db.getCategories();
       final settings = await db.getSettings();
       final now = _now;
       final ends = blocks.map((b) => b.plannedEnd).whereType<DateTime>().toList()
@@ -150,10 +146,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       final result = RoutineEngine.distill(
         currentBlocks: blocks,
-        categories: categories,
         now: now,
-        dayEnd: dayEnd,
-        bufferMinutes: settings.bufferMinutes,
         settings: settings,
       );
       if (!mounted) return;
@@ -172,7 +165,8 @@ class _HomeScreenState extends State<HomeScreen> {
             '${result.partial.isEmpty ? '' : ' and ${result.partial.length} partial session(s) ($keptMinutes min)'}.\n'
             'Discards: ${result.discarded.length} unfinished block(s) '
             '(${result.discardedPlannedMinutes} min planned).\n'
-            '${result.added.isEmpty ? 'No time is left before ${_hm(dayEnd)}, so nothing new is planned.' : 'Re-plans: ${result.added.length} new block(s) from now until ${_hm(dayEnd)}.'}',
+            'Nothing new is planned. Use Start Day afterwards to plan the '
+            'rest of your day.',
           ),
           actions: [
             TextButton(
@@ -189,7 +183,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (confirmed != true || !mounted) return;
 
       // Meta and blocks are replaced atomically; the resolved deadline is
-      // persisted so Today keeps the same deadline after the plan changes.
+      // persisted so the day keeps its deadline once pending blocks are gone.
       await db.saveDayRoutine(
         day: day,
         dayMode: meta.$1,
@@ -207,14 +201,13 @@ class _HomeScreenState extends State<HomeScreen> {
               )
               .toList(),
         );
-        await NotificationService.instance.scheduleForBlocks(result.added);
       } catch (_) {
         _snack('Distilled, but block reminders could not be updated.');
       }
       await _checkForTodayRoutine();
       _snack(
         'Distilled: kept ${result.completed.length + result.partial.length}, '
-        're-planned ${result.added.length}.',
+        'discarded ${result.discarded.length}.',
       );
     } catch (_) {
       _snack('Could not distill today’s routine. Please try again.');
@@ -278,6 +271,15 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildHomeTab(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final hasTodayRoutine = _routine != null;
+    // Nothing left to run (e.g. after Distill): offer Start Day to plan more.
+    final hasActionable =
+        hasTodayRoutine &&
+        _routine!.blocks.any(
+          (b) =>
+              b.status == BlockStatus.pending ||
+              b.status == BlockStatus.active ||
+              b.status == BlockStatus.paused,
+        );
 
     return Center(
       child: Padding(
@@ -286,7 +288,7 @@ class _HomeScreenState extends State<HomeScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              hasTodayRoutine
+              hasActionable
                   ? Icons.check_circle_outline
                   : Icons.wb_sunny_outlined,
               size: 56,
@@ -294,7 +296,11 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 16),
             Text(
-              hasTodayRoutine ? "Today's routine is ready" : 'Good morning 👋',
+              hasActionable
+                  ? "Today's routine is ready"
+                  : hasTodayRoutine
+                  ? 'Plan the rest of your day'
+                  : 'Good morning 👋',
               style: Theme.of(context).textTheme.headlineSmall
                   ?.copyWith(fontWeight: FontWeight.w600),
               textAlign: TextAlign.center,
@@ -306,7 +312,7 @@ class _HomeScreenState extends State<HomeScreen> {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 32),
-            if (hasTodayRoutine) ...[
+            if (hasActionable) ...[
               Semantics(
                 button: true,
                 label: "Continue today's routine",
@@ -366,6 +372,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               ),
+              if (hasTodayRoutine) ...[
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: _opening ? null : () => _openTodayScreen(context),
+                  child: const Text("View today's log"),
+                ),
+              ],
           ],
         ),
       ),
@@ -375,6 +388,22 @@ class _HomeScreenState extends State<HomeScreen> {
   String _todaySummary() {
     final blocks = _routine!.blocks;
     final done = blocks.where((b) => b.status == BlockStatus.completed).length;
-    return '$done/${blocks.length} blocks done · ${_routine!.dayMode.label}';
+    final hasActionable = blocks.any(
+      (b) =>
+          b.status == BlockStatus.pending ||
+          b.status == BlockStatus.active ||
+          b.status == BlockStatus.paused,
+    );
+    if (hasActionable) {
+      return '$done/${blocks.length} blocks done · ${_routine!.dayMode.label}';
+    }
+    final realSeconds = blocks
+        .where(
+          (b) =>
+              b.status == BlockStatus.completed ||
+              b.status == BlockStatus.partial,
+        )
+        .fold<int>(0, (sum, b) => sum + b.recordedSeconds);
+    return '${realSeconds ~/ 60} min of real work kept · ${_routine!.dayMode.label}';
   }
 }

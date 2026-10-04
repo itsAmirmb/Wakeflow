@@ -51,18 +51,27 @@ class AppSettings {
     );
   }
 
-  /// True when [elapsed] on a block of [plannedMinutes] is worth keeping as a
-  /// partial session instead of being discarded by a distillation.
+  /// Progress a block of [plannedMinutes] needs before it counts as real
+  /// work. Never more than the block's own duration, so short blocks can
+  /// always reach it.
+  Duration keepThreshold(int plannedMinutes) {
+    final planned = Duration(minutes: plannedMinutes);
+    final raw = distillKeepMode == DistillKeepMode.minutes
+        ? Duration(minutes: distillKeepValue)
+        : Duration(
+            seconds: (plannedMinutes * 60 * distillKeepValue / 100).ceil(),
+          );
+    return raw > planned ? planned : raw;
+  }
+
+  /// True when [elapsed] on a block of [plannedMinutes] reached the keep
+  /// threshold. Used both to unlock DONE and to decide what Distill keeps.
   bool isProgressKept({
     required Duration elapsed,
     required int plannedMinutes,
   }) {
-    final seconds = elapsed.inSeconds;
-    if (seconds <= 0) return false;
-    final thresholdSeconds = distillKeepMode == DistillKeepMode.minutes
-        ? distillKeepValue * 60
-        : plannedMinutes * 60 * distillKeepValue / 100;
-    return seconds >= thresholdSeconds;
+    if (elapsed.inSeconds <= 0) return false;
+    return elapsed.inSeconds >= keepThreshold(plannedMinutes).inSeconds;
   }
 
   /// Ignore invalid stored entries and keep clock times unique and sorted.
@@ -71,6 +80,7 @@ class AppSettings {
         .whereType<int>()
         .where((m) => m >= 0 && m < 1440)
         .toSet();
+
     return valid.toList()..sort();
   }
 

@@ -4,21 +4,19 @@ import '../models/app_settings.dart';
 import '../models/category.dart';
 import '../models/block.dart';
 
-/// Outcome of [RoutineEngine.distill]: what is kept, what is dropped, and the
-/// full replacement block list for the day.
+/// Outcome of [RoutineEngine.distill]: what is kept and what is dropped.
 class DistillResult {
+  /// The day's blocks after distillation (completed + partial only).
   final List<Block> blocks;
   final List<Block> completed;
   final List<Block> partial;
   final List<Block> discarded;
-  final List<Block> added;
 
   const DistillResult({
     required this.blocks,
     required this.completed,
     required this.partial,
     required this.discarded,
-    required this.added,
   });
 
   int get partialSeconds =>
@@ -269,21 +267,17 @@ class RoutineEngine {
     return [];
   }
 
-  /// Distillation: keeps what is real and re-plans the rest of the day.
+  /// Distillation: keeps what is real and drops the rest. It does not plan
+  /// anything new; planning the remaining time is Start Day's job.
   ///
   /// - Completed and partial blocks are always kept untouched.
   /// - Active, paused and skipped blocks whose recorded progress reaches the
   ///   user's threshold become [BlockStatus.partial] (time done, kept in
   ///   stats); below it they are discarded.
   /// - Pending and cancelled blocks are discarded.
-  /// Then the remaining time up to [dayEnd] is re-planned, crediting the
-  /// real work already done per category.
   static DistillResult distill({
     required List<Block> currentBlocks,
-    required List<Category> categories,
     required DateTime now,
-    required DateTime dayEnd,
-    required int bufferMinutes,
     required AppSettings settings,
   }) {
     final completed = <Block>[];
@@ -328,21 +322,11 @@ class RoutineEngine {
         if (x == null || y == null) return 0;
         return x.compareTo(y);
       });
-    // Only kept work goes in: discarded blocks must not be credited, and a
-    // discarded active/paused block must not reserve any remaining time.
-    final all = recalculateFromCheckpoint(
-      currentBlocks: kept,
-      categories: categories,
-      now: now,
-      dayEnd: dayEnd,
-      bufferMinutes: bufferMinutes,
-    );
     return DistillResult(
-      blocks: all,
+      blocks: kept,
       completed: completed,
       partial: partial,
       discarded: discarded,
-      added: all.skip(kept.length).toList(),
     );
   }
 
