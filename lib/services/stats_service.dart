@@ -163,6 +163,10 @@ class StatsService {
               block.actualEnd!.difference(block.actualStart!).inSeconds,
             );
           }
+        } else if (block.status == BlockStatus.partial) {
+          // Real work saved by a timer reset: counts as time done, but it is
+          // not a completed block.
+          completedSeconds += math.max(0, block.accumulatedSeconds);
         } else if (block.status == BlockStatus.skipped) {
           skippedBlocks++;
         }

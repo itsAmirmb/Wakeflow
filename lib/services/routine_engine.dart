@@ -1,7 +1,31 @@
 import 'dart:math' as math;
 
+import '../models/app_settings.dart';
 import '../models/category.dart';
 import '../models/block.dart';
+
+/// Outcome of [RoutineEngine.distill]: what is kept, what is dropped, and the
+/// full replacement block list for the day.
+class DistillResult {
+  final List<Block> blocks;
+  final List<Block> completed;
+  final List<Block> partial;
+  final List<Block> discarded;
+  final List<Block> added;
+
+  const DistillResult({
+    required this.blocks,
+    required this.completed,
+    required this.partial,
+    required this.discarded,
+    required this.added,
+  });
+
+  int get partialSeconds =>
+      partial.fold(0, (sum, b) => sum + b.accumulatedSeconds);
+  int get discardedPlannedMinutes =>
+      discarded.fold(0, (sum, b) => sum + b.plannedDurationMinutes);
+}
 
 class RoutineEngine {
   // The counter guarantees uniqueness across calls in this isolate; the random
@@ -245,6 +269,83 @@ class RoutineEngine {
     return [];
   }
 
+  /// Distillation: keeps what is real and re-plans the rest of the day.
+  ///
+  /// - Completed and partial blocks are always kept untouched.
+  /// - Active, paused and skipped blocks whose recorded progress reaches the
+  ///   user's threshold become [BlockStatus.partial] (time done, kept in
+  ///   stats); below it they are discarded.
+  /// - Pending and cancelled blocks are discarded.
+  /// Then the remaining time up to [dayEnd] is re-planned, crediting the
+  /// real work already done per category.
+  static DistillResult distill({
+    required List<Block> currentBlocks,
+    required List<Category> categories,
+    required DateTime now,
+    required DateTime dayEnd,
+    required int bufferMinutes,
+    required AppSettings settings,
+  }) {
+    final completed = <Block>[];
+    final partial = <Block>[];
+    final discarded = <Block>[];
+    for (final block in currentBlocks) {
+      switch (block.status) {
+        case BlockStatus.completed:
+          completed.add(block);
+        case BlockStatus.partial:
+          partial.add(block);
+        case BlockStatus.cancelled:
+          break; // stale leftovers from an earlier recalculation
+        case BlockStatus.pending:
+          discarded.add(block);
+        case BlockStatus.active:
+        case BlockStatus.paused:
+        case BlockStatus.skipped:
+          final elapsed = block.elapsedAt(now);
+          if (settings.isProgressKept(
+            elapsed: elapsed,
+            plannedMinutes: block.plannedDurationMinutes,
+          )) {
+            final seconds = elapsed.inSeconds;
+            partial.add(
+              block.copyWith(
+                status: BlockStatus.partial,
+                actualEnd: block.actualEnd ?? now,
+                accumulatedSeconds: seconds,
+                runningSince: null,
+                plannedDurationMinutes: math.max(1, (seconds + 59) ~/ 60),
+              ),
+            );
+          } else {
+            discarded.add(block);
+          }
+      }
+    }
+    final kept = [...completed, ...partial]
+      ..sort((a, b) {
+        final x = a.plannedStart, y = b.plannedStart;
+        if (x == null || y == null) return 0;
+        return x.compareTo(y);
+      });
+    // Only kept work goes in: discarded blocks must not be credited, and a
+    // discarded active/paused block must not reserve any remaining time.
+    final all = recalculateFromCheckpoint(
+      currentBlocks: kept,
+      categories: categories,
+      now: now,
+      dayEnd: dayEnd,
+      bufferMinutes: bufferMinutes,
+    );
+    return DistillResult(
+      blocks: all,
+      completed: completed,
+      partial: partial,
+      discarded: discarded,
+      added: all.skip(kept.length).toList(),
+    );
+  }
+
   /// Replaces only pending blocks. Every nonpending object/ID is preserved.
   /// Completed work credits stored active seconds (or legacy actual timestamps
   /// when no seconds were stored), never its planned duration. Active/paused
@@ -268,7 +369,8 @@ class RoutineEngine {
     var startTime = now;
     for (final block in untouched) {
       var creditedSeconds = 0;
-      if (block.status == BlockStatus.completed) {
+      if (block.status == BlockStatus.completed ||
+          block.status == BlockStatus.partial) {
         creditedSeconds = math.max(0, block.accumulatedSeconds);
         if (creditedSeconds == 0 &&
             block.actualStart != null &&

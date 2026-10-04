@@ -39,7 +39,7 @@ class DatabaseService {
 
     return openDatabase(
       path,
-      version: 7,
+      version: 9,
       onCreate: createSchema,
       onUpgrade: upgradeSchema,
     );
@@ -171,6 +171,22 @@ class DatabaseService {
       await ensureColumn(db, 'settings', 'checkpointTimes', "TEXT NOT NULL DEFAULT '[]'");
       await _createCheckpointsTable(db);
     }
+    // v8 -> v9: distillation keep-threshold (columns are idempotent, so any
+    // earlier path converges on the same schema).
+    if (oldVersion < 9) {
+      await ensureColumn(
+        db,
+        'settings',
+        'distillKeepMode',
+        "TEXT NOT NULL DEFAULT 'minutes'",
+      );
+      await ensureColumn(
+        db,
+        'settings',
+        'distillKeepValue',
+        'INTEGER NOT NULL DEFAULT 5',
+      );
+    }
   }
 
   static Future<void> _createCheckpointsTable(DatabaseExecutor db) async {
@@ -233,7 +249,9 @@ class DatabaseService {
         wakeReminderHour INTEGER NOT NULL,
         wakeReminderMinute INTEGER NOT NULL,
         themeMode TEXT NOT NULL DEFAULT 'system',
-        checkpointTimes TEXT NOT NULL DEFAULT '[]'
+        checkpointTimes TEXT NOT NULL DEFAULT '[]',
+        distillKeepMode TEXT NOT NULL DEFAULT 'minutes',
+        distillKeepValue INTEGER NOT NULL DEFAULT 5
       )
     ''');
   }

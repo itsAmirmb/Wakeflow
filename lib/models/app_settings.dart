@@ -1,5 +1,8 @@
 import 'dart:convert';
 
+/// How the distillation keep-threshold is expressed.
+enum DistillKeepMode { minutes, percent }
+
 /// App-wide settings, editable from the Settings tab. Stored as a
 /// single row (id-less key-value would also work, but a single row
 /// is simpler for the handful of fields we have).
@@ -10,12 +13,20 @@ class AppSettings {
   final String themeMode; // 'system' | 'light' | 'dark'
   final List<int> checkpointMinutesOfDay;
 
+  /// Distillation keeps an unfinished block as a partial session when its
+  /// progress reaches this threshold; below it, the block is discarded and
+  /// re-planned. 0 means any recorded progress is kept.
+  final DistillKeepMode distillKeepMode;
+  final int distillKeepValue; // minutes, or percent of the block (0-100)
+
   const AppSettings({
     this.bufferMinutes = 10,
     this.wakeReminderHour = 8,
     this.wakeReminderMinute = 0,
     this.themeMode = 'system',
     this.checkpointMinutesOfDay = const [],
+    this.distillKeepMode = DistillKeepMode.minutes,
+    this.distillKeepValue = 5,
   });
 
   AppSettings copyWith({
@@ -24,6 +35,8 @@ class AppSettings {
     int? wakeReminderMinute,
     String? themeMode,
     List<int>? checkpointMinutesOfDay,
+    DistillKeepMode? distillKeepMode,
+    int? distillKeepValue,
   }) {
     return AppSettings(
       bufferMinutes: bufferMinutes ?? this.bufferMinutes,
@@ -33,7 +46,23 @@ class AppSettings {
       checkpointMinutesOfDay: _normalizeCheckpoints(
         checkpointMinutesOfDay ?? this.checkpointMinutesOfDay,
       ),
+      distillKeepMode: distillKeepMode ?? this.distillKeepMode,
+      distillKeepValue: distillKeepValue ?? this.distillKeepValue,
     );
+  }
+
+  /// True when [elapsed] on a block of [plannedMinutes] is worth keeping as a
+  /// partial session instead of being discarded by a distillation.
+  bool isProgressKept({
+    required Duration elapsed,
+    required int plannedMinutes,
+  }) {
+    final seconds = elapsed.inSeconds;
+    if (seconds <= 0) return false;
+    final thresholdSeconds = distillKeepMode == DistillKeepMode.minutes
+        ? distillKeepValue * 60
+        : plannedMinutes * 60 * distillKeepValue / 100;
+    return seconds >= thresholdSeconds;
   }
 
   /// Ignore invalid stored entries and keep clock times unique and sorted.
@@ -55,6 +84,8 @@ class AppSettings {
       'checkpointTimes': jsonEncode(
         _normalizeCheckpoints(checkpointMinutesOfDay),
       ),
+      'distillKeepMode': distillKeepMode.name,
+      'distillKeepValue': distillKeepValue,
     };
   }
 
@@ -70,6 +101,11 @@ class AppSettings {
       checkpointMinutesOfDay: _parseCheckpoints(
         map['checkpointTimes'] as String?,
       ),
+      distillKeepMode: DistillKeepMode.values.firstWhere(
+        (m) => m.name == map['distillKeepMode'],
+        orElse: () => DistillKeepMode.minutes,
+      ),
+      distillKeepValue: map['distillKeepValue'] as int? ?? 5,
     );
   }
 

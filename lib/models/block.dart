@@ -1,4 +1,16 @@
-enum BlockStatus { pending, active, paused, completed, skipped, cancelled }
+enum BlockStatus {
+  pending,
+  active,
+  paused,
+  completed,
+  skipped,
+  cancelled,
+
+  /// Real work kept by a distillation: an unfinished block whose progress
+  /// reached the user's threshold. It counts in stats as time done, but it is
+  /// not a "done" block.
+  partial,
+}
 
 class Block {
   final String id;
@@ -53,6 +65,7 @@ class Block {
     DateTime? actualEnd,
     BlockStatus? status,
     int? accumulatedSeconds,
+    int? plannedDurationMinutes,
     // Nullable field: use a sentinel so callers can explicitly clear it
     // (pause) vs. leave it unchanged.
     Object? runningSince = _unset,
@@ -61,7 +74,8 @@ class Block {
       id: id,
       categoryId: categoryId,
       title: title,
-      plannedDurationMinutes: plannedDurationMinutes,
+      plannedDurationMinutes:
+          plannedDurationMinutes ?? this.plannedDurationMinutes,
       plannedStart: plannedStart ?? this.plannedStart,
       plannedEnd: plannedEnd ?? this.plannedEnd,
       actualStart: actualStart ?? this.actualStart,

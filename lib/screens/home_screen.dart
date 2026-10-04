@@ -9,6 +9,8 @@ import '../models/block.dart';
 import '../models/category.dart';
 import '../services/database_service.dart';
 import '../services/day_key.dart';
+import '../services/notification_service.dart';
+import '../services/routine_engine.dart';
 
 typedef HomeRoutine = ({
   String day,
@@ -35,6 +37,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // needed to jump straight back into it from the Home tab.
   HomeRoutine? _routine;
   bool _opening = false;
+  bool _distilling = false;
 
   DateTime get _now => (widget.now ?? DateTime.now)();
 
@@ -108,6 +111,115 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) await _checkForTodayRoutine();
     } finally {
       if (mounted) setState(() => _opening = false);
+    }
+  }
+
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  String _hm(DateTime t) =>
+      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  /// Distillation: keep the real work done today (completed blocks and
+  /// unfinished ones above the user's threshold) and re-plan everything else
+  /// up to the day's deadline. Discarded blocks are removed, so stats only
+  /// reflect work that actually happened.
+  Future<void> _distill() async {
+    if (_opening || _distilling) return;
+    setState(() => _distilling = true);
+    try {
+      final db = DatabaseService.instance;
+      final day = dayKey(_now);
+      final meta = await db.getDayMeta(day);
+      final blocks = await db.getBlocksForDay(day);
+      if (meta == null || blocks.isEmpty) {
+        await _checkForTodayRoutine();
+        return;
+      }
+      final categories = await db.getCategories();
+      final settings = await db.getSettings();
+      final now = _now;
+      final ends = blocks.map((b) => b.plannedEnd).whereType<DateTime>().toList()
+        ..sort();
+      final date = DateTime.parse(day);
+      final dayEnd =
+          meta.$3 ??
+          (ends.isNotEmpty ? ends.last : DateTime(date.year, date.month, date.day + 1));
+
+      final result = RoutineEngine.distill(
+        currentBlocks: blocks,
+        categories: categories,
+        now: now,
+        dayEnd: dayEnd,
+        bufferMinutes: settings.bufferMinutes,
+        settings: settings,
+      );
+      if (!mounted) return;
+      if (result.discarded.isEmpty) {
+        _snack('Nothing to distill — every block already holds real progress.');
+        return;
+      }
+
+      final keptMinutes = result.partialSeconds ~/ 60;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Distill today?'),
+          content: Text(
+            'Keeps: ${result.completed.length} completed block(s)'
+            '${result.partial.isEmpty ? '' : ' and ${result.partial.length} partial session(s) ($keptMinutes min)'}.\n'
+            'Discards: ${result.discarded.length} unfinished block(s) '
+            '(${result.discardedPlannedMinutes} min planned).\n'
+            '${result.added.isEmpty ? 'No time is left before ${_hm(dayEnd)}, so nothing new is planned.' : 'Re-plans: ${result.added.length} new block(s) from now until ${_hm(dayEnd)}.'}',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Distill'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+
+      // Meta and blocks are replaced atomically; the resolved deadline is
+      // persisted so Today keeps the same deadline after the plan changes.
+      await db.saveDayRoutine(
+        day: day,
+        dayMode: meta.$1,
+        wakeTime: meta.$2,
+        dayEnd: dayEnd,
+        blocks: result.blocks,
+      );
+      try {
+        await NotificationService.instance.cancelForBlocks(
+          blocks
+              .where(
+                (b) =>
+                    b.status != BlockStatus.completed &&
+                    b.status != BlockStatus.partial,
+              )
+              .toList(),
+        );
+        await NotificationService.instance.scheduleForBlocks(result.added);
+      } catch (_) {
+        _snack('Distilled, but block reminders could not be updated.');
+      }
+      await _checkForTodayRoutine();
+      _snack(
+        'Distilled: kept ${result.completed.length + result.partial.length}, '
+        're-planned ${result.added.length}.',
+      );
+    } catch (_) {
+      _snack('Could not distill today’s routine. Please try again.');
+    } finally {
+      if (mounted) setState(() => _distilling = false);
     }
   }
 
@@ -194,12 +306,14 @@ class _HomeScreenState extends State<HomeScreen> {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 32),
-            if (hasTodayRoutine)
+            if (hasTodayRoutine) ...[
               Semantics(
                 button: true,
                 label: "Continue today's routine",
                 child: ElevatedButton.icon(
-                  onPressed: _opening ? null : () => _openTodayScreen(context),
+                  onPressed: _opening || _distilling
+                      ? null
+                      : () => _openTodayScreen(context),
                   icon: const Icon(Icons.play_arrow),
                   label: const Text(
                     'Continue Routine',
@@ -209,8 +323,27 @@ class _HomeScreenState extends State<HomeScreen> {
                     minimumSize: const Size(240, 56),
                   ),
                 ),
-              )
-            else
+              ),
+              const SizedBox(height: 12),
+              Semantics(
+                button: true,
+                label: "Distill today's routine",
+                child: OutlinedButton.icon(
+                  onPressed: _opening || _distilling ? null : _distill,
+                  icon: _distilling
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.science_outlined),
+                  label: const Text('Distill', style: TextStyle(fontSize: 18)),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(240, 56),
+                  ),
+                ),
+              ),
+            ] else
               Semantics(
                 button: true,
                 label: 'Start Day',

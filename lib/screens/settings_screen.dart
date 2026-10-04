@@ -325,6 +325,64 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
           ),
+          ListTile(
+            leading: const Icon(Icons.restart_alt),
+            title: const Text('Distillation: keep progress'),
+            subtitle: Text(
+              _settings.distillKeepValue == 0
+                  ? 'Any unfinished block with progress is kept as a partial session'
+                  : 'Unfinished blocks with at least ${_settings.distillKeepMode == DistillKeepMode.minutes ? '${_settings.distillKeepValue} min' : '${_settings.distillKeepValue}% of the block'}'
+                      ' done are kept as partial sessions; the rest are discarded',
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+            child: SegmentedButton<DistillKeepMode>(
+              segments: const [
+                ButtonSegment(
+                  value: DistillKeepMode.minutes,
+                  label: Text('Minutes'),
+                ),
+                ButtonSegment(
+                  value: DistillKeepMode.percent,
+                  label: Text('Percent'),
+                ),
+              ],
+              selected: {_settings.distillKeepMode},
+              onSelectionChanged: (selection) => _saveSettings(
+                _settings.copyWith(
+                  distillKeepMode: selection.first,
+                  // Ranges differ, so start from a sensible default.
+                  distillKeepValue:
+                      selection.first == DistillKeepMode.minutes ? 5 : 20,
+                ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Slider(
+              value: _settings.distillKeepValue.toDouble(),
+              min: 0,
+              max: _settings.distillKeepMode == DistillKeepMode.minutes
+                  ? 60
+                  : 100,
+              divisions: _settings.distillKeepMode == DistillKeepMode.minutes
+                  ? 60
+                  : 20,
+              label: _settings.distillKeepMode == DistillKeepMode.minutes
+                  ? '${_settings.distillKeepValue}m'
+                  : '${_settings.distillKeepValue}%',
+              onChanged: (value) => setState(
+                () => _settings = _settings.copyWith(
+                  distillKeepValue: value.round(),
+                ),
+              ),
+              onChangeEnd: (value) => _saveSettings(
+                _settings.copyWith(distillKeepValue: value.round()),
+              ),
+            ),
+          ),
           const Divider(height: 32),
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 0, 16, 4),

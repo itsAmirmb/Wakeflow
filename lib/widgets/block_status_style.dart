@@ -48,6 +48,12 @@ class BlockStatusStyle {
           icon: Icons.skip_next,
           label: 'Skipped',
         );
+      case BlockStatus.partial:
+        return BlockStatusStyle(
+          color: scheme.tertiary,
+          icon: Icons.timelapse,
+          label: 'Partial',
+        );
       case BlockStatus.cancelled:
         return BlockStatusStyle(
           color: scheme.onSurfaceVariant.withValues(alpha: 0.6),
