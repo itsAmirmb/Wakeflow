@@ -11,6 +11,8 @@ import 'checkpoint_screen.dart';
 import 'checkpoint_history_screen.dart';
 import '../models/block.dart';
 import '../models/category.dart';
+import '../services/break_state.dart';
+import '../services/checkpoint_gate.dart';
 import '../services/routine_engine.dart';
 import '../services/database_service.dart';
 import '../services/notification_service.dart';
@@ -31,6 +33,8 @@ class TodayScreen extends StatefulWidget {
   final DateTime Function()? now;
   final Future<void> Function(AppSettings settings, DateTime wake, DateTime end)?
       syncCheckpointReminders;
+  final Future<void> Function(DateTime when, String nextTitle)? scheduleBreakAlarm;
+  final Future<void> Function()? cancelBreakAlarm;
 
   const TodayScreen({
     super.key,
@@ -43,6 +47,8 @@ class TodayScreen extends StatefulWidget {
     this.database,
     this.now,
     this.syncCheckpointReminders,
+    this.scheduleBreakAlarm,
+    this.cancelBreakAlarm,
   });
 
   @override
@@ -54,6 +60,11 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   Timer? _timer;
   AppSettings _settings = const AppSettings();
   bool _reviewing = false;
+  bool _alarmSilenced = false;
+  Timer? _gateTimer;
+  DateTime? _gateWake;
+  DateTime? _gateEnd;
+  DateTime? _lastReviewAt;
   bool _writeFailed = false;
   int? _reviewCount;
   String? _checkpointError;
@@ -67,11 +78,20 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
       setState(() {
         _reviewCount = reviews.length;
         _checkpointError = null;
+        _lastReviewAt = reviews.isEmpty
+            ? null
+            : DateTime.tryParse('${reviews.first['reviewedAt']}');
       });
       final settings = await _db.getSettings();
       final meta = await _db.getDayMeta(widget.day);
       if (!mounted || meta == null) return;
       final end = _deadline(meta.$3);
+      _gateWake = meta.$2;
+      _gateEnd = end;
+      setState(() => _settings = settings);
+      // Evaluated before reminders are synced, so a notification failure can
+      // never let a due checkpoint slip through.
+      _evaluateGate();
       if (widget.syncCheckpointReminders != null) {
         await widget.syncCheckpointReminders!(settings, meta.$2, end);
       } else {
@@ -93,6 +113,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     try {
       final settings = await _db.getSettings();
       if (mounted) setState(() => _settings = settings);
+      _resumeBreakTicking();
     } catch (_) {
       // Keep defaults; DONE then follows the default keep threshold.
     }
@@ -111,6 +132,73 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
         ? '${t.inMinutes} min'
         : '${t.inMinutes.toString().padLeft(2, '0')}:${(t.inSeconds % 60).toString().padLeft(2, '0')}';
     return 'DONE unlocks after $text on the timer';
+  }
+
+  bool get _hasUnfinished => _blocks.any(
+    (b) =>
+        b.status == BlockStatus.pending ||
+        b.status == BlockStatus.active ||
+        b.status == BlockStatus.paused,
+  );
+
+  /// The checkpoint time that is owed a review right now, if any.
+  DateTime? _dueCheckpoint() {
+    final wake = _gateWake;
+    final end = _gateEnd;
+    if (wake == null || end == null || !_hasUnfinished) return null;
+    return CheckpointGate.dueAt(
+      minutesOfDay: _settings.checkpointMinutesOfDay,
+      wake: wake,
+      dayEnd: end,
+      now: _now,
+      lastReviewAt: _lastReviewAt,
+    );
+  }
+
+  /// A due checkpoint opens the review at once and cannot be skipped.
+  void _evaluateGate() {
+    if (!mounted || _reviewing) return;
+    if (_dueCheckpoint() != null) unawaited(_runCheckpoint(forced: true));
+  }
+
+  BreakState? _break() => BreakState.derive(
+    blocks: _blocks,
+    bufferMinutes: _settings.bufferMinutes,
+    now: _now,
+  );
+
+  void _resumeBreakTicking() {
+    final state = _break();
+    if (state != null && !state.isOver(_now) && _timer?.isActive != true) {
+      _startTicking();
+    }
+  }
+
+  Future<void> _scheduleBreakAlarm(BreakState state) async {
+    try {
+      if (widget.scheduleBreakAlarm != null) {
+        await widget.scheduleBreakAlarm!(state.end, state.next.title);
+      } else if (widget.syncNotifications == null) {
+        await NotificationService.instance.scheduleBreakEnd(
+          when: state.end,
+          nextTitle: state.next.title,
+        );
+      }
+    } catch (_) {
+      _showError('Could not schedule the break alarm. Check notification permissions.');
+    }
+  }
+
+  Future<void> _cancelBreakAlarm() async {
+    try {
+      if (widget.cancelBreakAlarm != null) {
+        await widget.cancelBreakAlarm!();
+      } else if (widget.syncNotifications == null) {
+        await NotificationService.instance.cancelBreakAlarm();
+      }
+    } catch (_) {
+      // Nothing useful to tell the user: the alarm times out by itself.
+    }
   }
 
   DateTime _deadline(DateTime? saved) {
@@ -136,6 +224,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     unawaited(_refreshCheckpoints());
     unawaited(_loadSettings());
+    _gateTimer = Timer.periodic(const Duration(seconds: 15), (_) => _evaluateGate());
     // If a block was already running when the app was closed, resume
     // ticking so the on-screen timer keeps advancing.
     final current = _currentBlock;
@@ -149,6 +238,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
+    _gateTimer?.cancel();
     super.dispose();
   }
 
@@ -218,7 +308,12 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     // counter. So even if ticking is interrupted (app backgrounded),
     // the displayed time is correct the moment it resumes.
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
       setState(() {});
+      // Keep ticking while a block runs or a break is counting down.
+      final running = _currentBlock?.status == BlockStatus.active;
+      final onBreak = _break()?.isOver(_now) == false;
+      if (!running && !onBreak) _stopTicking();
     });
   }
 
@@ -230,6 +325,10 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   // callbacks must never act on a newer state (even for the same block ID).
   void _actOn(Block expected, VoidCallback action) {
     if (!mounted || _reviewing || !identical(_currentBlock, expected)) return;
+    if (_dueCheckpoint() != null) {
+      _evaluateGate();
+      return;
+    }
     action();
   }
 
@@ -246,6 +345,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
       _blocks[index] = updated;
     });
     _startTicking();
+    unawaited(_cancelBreakAlarm());
     _persist(updated);
   }
 
@@ -295,8 +395,15 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     );
     setState(() {
       _blocks[index] = updated;
+      _alarmSilenced = false;
     });
     _persist(updated);
+    // The break timer starts now; its end rings like an alarm.
+    final state = _break();
+    if (state != null) {
+      _startTicking();
+      unawaited(_scheduleBreakAlarm(state));
+    }
   }
 
   void _skipCurrent() {
@@ -316,10 +423,15 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     _persist(updated);
   }
 
-  Future<void> _runCheckpoint() async {
+  Future<void> _runCheckpoint({bool forced = false}) async {
     if (_reviewing) return;
     setState(() => _reviewing = true);
     try {
+      // A forced review freezes a running block first, so what is previewed
+      // is exactly what gets saved.
+      if (forced && _currentBlock?.status == BlockStatus.active) {
+        _pauseCurrent();
+      }
       await _pendingWrite;
       if (_writeFailed) {
         throw StateError('Reopen Today to reload saved block progress first.');
@@ -337,6 +449,8 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
       final saved = await Navigator.push<bool>(context, MaterialPageRoute(
         builder: (_) => CheckpointScreen(
           report: report,
+          forceDistill: forced,
+          hasUnfinished: _hasUnfinished,
           previewFuture: () {
             previewedAt = _now;
             return RoutineEngine.recalculateFromCheckpoint(
@@ -355,8 +469,11 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
           saveDistill: (assessments, note, result) async {
             // Same freshness rule as a new plan: never apply a different
             // distillation than the one previewed.
+            // Only a running timer makes a preview go stale; a paused or
+            // pending block distills to the same result at any time.
+            final running = _blocks.any((b) => b.status == BlockStatus.active);
             if (previewedAt == null ||
-                _now.difference(previewedAt!).inSeconds >= 60) {
+                (running && _now.difference(previewedAt!).inSeconds >= 60)) {
               throw StateError('Preview expired. Go back and preview again.');
             }
             final before = List<Block>.of(_blocks);
@@ -382,6 +499,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
               persistDayEnd: dayEnd,
             );
             progress = built;
+            unawaited(_cancelBreakAlarm());
             if (mounted) {
               _stopTicking();
               setState(() {
@@ -455,6 +573,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final currentIndex = _currentIndex;
     final currentBlock = currentIndex == -1 ? null : _blocks[currentIndex];
+    final breakState = _break();
 
     return Scaffold(
       appBar: AppBar(
@@ -523,7 +642,21 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
               opacity: animation,
               child: SizeTransition(sizeFactor: animation, child: child),
             ),
-            child: currentBlock != null
+            child: breakState != null
+                ? _BreakPanel(
+                    key: ValueKey(
+                      'break-${breakState.next.id}-${breakState.isOver(_now)}',
+                    ),
+                    state: breakState,
+                    now: _now,
+                    alarmSilenced: _alarmSilenced,
+                    onStartNext: () => _actOn(breakState.next, _startCurrent),
+                    onStopAlarm: () {
+                      setState(() => _alarmSilenced = true);
+                      unawaited(_cancelBreakAlarm());
+                    },
+                  )
+                : currentBlock != null
                 ? _CurrentBlockPanel(
                     key: ValueKey('${currentBlock.id}-${currentBlock.status}'),
                     block: currentBlock,
@@ -801,6 +934,101 @@ class _CurrentBlockPanel extends StatelessWidget {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Rest between two blocks: a countdown ring, then a "break over" state while
+/// the end-of-break alarm may still be ringing.
+class _BreakPanel extends StatelessWidget {
+  final BreakState state;
+  final DateTime now;
+  final bool alarmSilenced;
+  final VoidCallback onStartNext;
+  final VoidCallback onStopAlarm;
+
+  const _BreakPanel({
+    super.key,
+    required this.state,
+    required this.now,
+    required this.alarmSilenced,
+    required this.onStartNext,
+    required this.onStopAlarm,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final over = state.isOver(now);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHigh,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.shadow.withValues(alpha: 0.08),
+            blurRadius: 12,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            over ? 'BREAK OVER' : 'BREAK',
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: over ? scheme.error : scheme.tertiary,
+              letterSpacing: 1.2,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Next: ${state.next.title}',
+            style: Theme.of(context).textTheme.titleLarge,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 12),
+          CircularTimer(
+            elapsed: state.elapsed(now),
+            planned: state.total,
+            status: BlockStatus.active,
+            size: MediaQuery.sizeOf(context).height < 640 ? 120 : 160,
+            color: over ? scheme.error : scheme.tertiary,
+            caption: over ? 'Break over' : 'Break',
+            showOvertime: false,
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: Semantics(
+                  button: true,
+                  label: 'Start ${state.next.title}',
+                  child: FilledButton.icon(
+                    onPressed: onStartNext,
+                    icon: const Icon(Icons.play_arrow),
+                    label: Text(over ? 'START NEXT' : 'START NOW'),
+                  ),
+                ),
+              ),
+              if (over && !alarmSilenced) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onStopAlarm,
+                    icon: const Icon(Icons.alarm_off),
+                    label: const Text('STOP ALARM'),
+                  ),
+                ),
+              ],
+            ],
+          ),
         ],
       ),
     );

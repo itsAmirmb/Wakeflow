@@ -16,12 +16,20 @@ class CircularTimer extends StatelessWidget {
   final BlockStatus status;
   final double size;
 
+  /// Optional overrides, used by the break timer.
+  final String? caption;
+  final Color? color;
+  final bool showOvertime;
+
   const CircularTimer({
     super.key,
     required this.elapsed,
     required this.planned,
     required this.status,
     this.size = 160,
+    this.caption,
+    this.color,
+    this.showOvertime = true,
   });
 
   @override
@@ -33,15 +41,17 @@ class CircularTimer extends StatelessWidget {
     final elapsedSec = elapsed.inSeconds;
     final isPending = status == BlockStatus.pending;
     final isPaused = status == BlockStatus.paused;
-    final isOvertime = !isPending && elapsedSec > plannedSec;
+    final isOvertime = showOvertime && !isPending && elapsedSec > plannedSec;
 
     final progress = (isPending || plannedSec <= 0)
         ? 0.0
         : (elapsedSec / plannedSec).clamp(0.0, 1.0);
 
-    final ringColor = isOvertime
-        ? scheme.error
-        : BlockStatusStyle.of(context, status).color;
+    final ringColor =
+        color ??
+        (isOvertime
+            ? scheme.error
+            : BlockStatusStyle.of(context, status).color);
 
     final displaySeconds = isPending
         ? plannedSec
@@ -50,13 +60,13 @@ class CircularTimer extends StatelessWidget {
             : plannedSec - elapsedSec;
     final timeText = '${isOvertime ? '+' : ''}${_format(displaySeconds)}';
 
-    final caption = isPending
+    final caption = this.caption ?? (isPending
         ? 'Ready'
         : isOvertime
             ? 'Over time'
             : isPaused
                 ? 'Paused'
-                : 'of ${planned.inMinutes} min';
+                : 'of ${planned.inMinutes} min');
 
     return Semantics(
       label: '$timeText, $caption',

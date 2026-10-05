@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../models/alert_style.dart';
 import '../models/category.dart';
 import '../models/app_settings.dart';
 import '../services/database_service.dart';
@@ -390,8 +391,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           if (_saving) const LinearProgressIndicator(),
           ListTile(
             leading: const Icon(Icons.space_bar),
-            title: const Text('Buffer between blocks'),
-            subtitle: Text('${_settings.bufferMinutes} minutes'),
+            title: const Text('Break between blocks'),
+            subtitle: Text(
+              _settings.bufferMinutes == 0
+                  ? 'No break timer'
+                  : '${_settings.bufferMinutes} minutes · a break timer runs after each finished block',
+            ),
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -490,6 +495,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             onTap: _pickDayReset,
           ),
+          const Divider(height: 32),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Text(
+              'Notifications',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+          for (final event in AlertEvent.values)
+            _AlertTile(
+              key: ValueKey('alert-${event.name}'),
+              event: event,
+              style: _settings.alertFor(event),
+              onChanged: (style) => _saveSettings(
+                _settings.copyWith(alerts: {..._settings.alerts, event: style}),
+              ),
+            ),
           const Divider(height: 32),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
@@ -614,6 +636,76 @@ class _NewCategoryDialogState extends State<_NewCategoryDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(onPressed: _submit, child: const Text('Add')),
+      ],
+    );
+  }
+}
+
+/// Alert style editor for one event: on/off, sound, vibration and whether the
+/// sound repeats (alarm-like) until the notification is opened or dismissed.
+class _AlertTile extends StatelessWidget {
+  final AlertEvent event;
+  final AlertStyle style;
+  final ValueChanged<AlertStyle> onChanged;
+
+  const _AlertTile({
+    super.key,
+    required this.event,
+    required this.style,
+    required this.onChanged,
+  });
+
+  static const _soundLabels = {
+    AlertSound.standard: 'Default',
+    AlertSound.alarm: 'Alarm',
+    AlertSound.silent: 'Silent',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final silent = style.sound == AlertSound.silent;
+    return ExpansionTile(
+      title: Text(event.label),
+      subtitle: Text(
+        !style.enabled
+            ? 'Off'
+            : '${_soundLabels[style.sound]}'
+                  '${style.vibrate ? ' · vibrate' : ''}'
+                  '${style.repeat && !silent ? ' · repeats' : ''}',
+      ),
+      trailing: Switch(
+        value: style.enabled,
+        onChanged: (value) => onChanged(style.copyWith(enabled: value)),
+      ),
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: SegmentedButton<AlertSound>(
+            segments: [
+              for (final sound in AlertSound.values)
+                ButtonSegment(value: sound, label: Text(_soundLabels[sound]!)),
+            ],
+            selected: {style.sound},
+            onSelectionChanged: (selection) =>
+                onChanged(style.copyWith(sound: selection.first)),
+          ),
+        ),
+        SwitchListTile(
+          title: const Text('Vibrate'),
+          value: style.vibrate,
+          onChanged: (value) => onChanged(style.copyWith(vibrate: value)),
+        ),
+        SwitchListTile(
+          title: const Text('Repeat until dismissed'),
+          subtitle: const Text(
+            'The sound loops for up to 3 minutes, or until you open or swipe '
+            'away the notification.',
+          ),
+          value: style.repeat && !silent,
+          onChanged: silent
+              ? null
+              : (value) => onChanged(style.copyWith(repeat: value)),
+        ),
       ],
     );
   }

@@ -15,6 +15,8 @@ class CheckpointScreen extends StatefulWidget {
     required this.save,
     this.distillPreview,
     this.saveDistill,
+    this.forceDistill = false,
+    this.hasUnfinished = true,
   });
 
   final CheckpointReport report;
@@ -25,6 +27,14 @@ class CheckpointScreen extends StatefulWidget {
     List<Block>? proposed,
   )
   save;
+
+  /// A checkpoint that is due: the screen cannot be left, and the only way
+  /// forward is to distill (the other actions stay disabled), so the timer
+  /// can never restart with unreviewed, unfinished blocks.
+  final bool forceDistill;
+
+  /// Whether any block is still waiting to run (nothing to distill otherwise).
+  final bool hasUnfinished;
 
   /// Optional: lets the review end with a distillation (keep real work, drop
   /// the rest) instead of re-planning. The Distill button only shows when
@@ -98,7 +108,7 @@ class _CheckpointScreenState extends State<CheckpointScreen> {
     FocusScope.of(context).unfocus();
     try {
       final result = widget.distillPreview!();
-      if (result.discarded.isEmpty) {
+      if (!widget.hasUnfinished) {
         _showError('Nothing to distill — every block already holds real progress.');
         return;
       }
@@ -169,7 +179,7 @@ class _CheckpointScreenState extends State<CheckpointScreen> {
     final inPreview = proposed != null || distill != null;
     final editing = !_saving && !inPreview;
     return PopScope<bool>(
-      canPop: _saved || (!_saving && !inPreview),
+      canPop: _saved || (!_saving && !inPreview && !widget.forceDistill),
       onPopInvokedWithResult: (didPop, result) {
         if (!didPop && !_saving && inPreview) _cancelPreview();
       },
@@ -182,7 +192,10 @@ class _CheckpointScreenState extends State<CheckpointScreen> {
                 ? 'Checkpoint'
                 : 'New plan preview',
           ),
-          leading: BackButton(
+          automaticallyImplyLeading: false,
+          leading: widget.forceDistill && !inPreview
+              ? null
+              : BackButton(
             onPressed: _saving
                 ? null
                 : () {
@@ -199,6 +212,17 @@ class _CheckpointScreenState extends State<CheckpointScreen> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              if (widget.forceDistill)
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.flag_outlined),
+                    title: const Text('Checkpoint reached'),
+                    subtitle: const Text(
+                      'Answer below, then distill to continue. Your timer '
+                      'does not restart until the checkpoint is distilled.',
+                    ),
+                  ),
+                ),
               Text(
                 '${widget.report.remainingMinutes} min remaining · '
                 'Finish by ${TimeOfDay.fromDateTime(widget.report.dayEnd).format(context)}',
@@ -380,22 +404,28 @@ class _CheckpointScreenState extends State<CheckpointScreen> {
                 ],
                 if (!inPreview) ...[
                   FilledButton(
-                    onPressed: _saving
+                    onPressed: _saving || widget.forceDistill
                         ? null
                         : () => _save(withProposal: false),
                     child: const Text('Save & continue'),
                   ),
                   OutlinedButton(
-                    onPressed: _saving ? null : _preview,
+                    onPressed: _saving || widget.forceDistill ? null : _preview,
                     child: const Text('Preview new plan'),
                   ),
                   if (widget.distillPreview != null &&
                       widget.saveDistill != null)
-                    OutlinedButton.icon(
-                      onPressed: _saving ? null : _previewDistill,
-                      icon: const Icon(Icons.science_outlined),
-                      label: const Text('Distill & see report'),
-                    ),
+                    widget.forceDistill
+                        ? FilledButton.icon(
+                            onPressed: _saving ? null : _previewDistill,
+                            icon: const Icon(Icons.science_outlined),
+                            label: const Text('Distill & see report'),
+                          )
+                        : OutlinedButton.icon(
+                            onPressed: _saving ? null : _previewDistill,
+                            icon: const Icon(Icons.science_outlined),
+                            label: const Text('Distill & see report'),
+                          ),
                 ] else if (distill != null) ...[
                   FilledButton(
                     onPressed: _saving ? null : _saveDistill,

@@ -39,7 +39,7 @@ class DatabaseService {
 
     return openDatabase(
       path,
-      version: 11,
+      version: 12,
       onCreate: createSchema,
       onUpgrade: upgradeSchema,
     );
@@ -188,6 +188,10 @@ class DatabaseService {
         'INTEGER NOT NULL DEFAULT 5',
       );
     }
+    // v11 -> v12: per-event alert styles (JSON).
+    if (oldVersion < 12) {
+      await ensureColumn(db, 'settings', 'alerts', "TEXT NOT NULL DEFAULT '{}'");
+    }
     // v10 -> v11: optional per-category daily maximum (NULL = no limit).
     if (oldVersion < 11) {
       await ensureColumn(db, 'categories', 'maximumMinutes', 'INTEGER');
@@ -281,7 +285,8 @@ class DatabaseService {
         checkpointTimes TEXT NOT NULL DEFAULT '[]',
         distillKeepMode TEXT NOT NULL DEFAULT 'minutes',
         distillKeepValue INTEGER NOT NULL DEFAULT 5,
-        dayResetMinutes INTEGER NOT NULL DEFAULT 240
+        dayResetMinutes INTEGER NOT NULL DEFAULT 240,
+        alerts TEXT NOT NULL DEFAULT '{}'
       )
     ''');
   }

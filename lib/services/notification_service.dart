@@ -1,11 +1,14 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 
+import '../models/alert_style.dart';
 import '../models/block.dart';
+import 'database_service.dart';
 
 /// Notification failures propagate to callers so UI can report them without
 /// undoing a successfully persisted routine/settings change.
@@ -34,6 +37,11 @@ class NotificationService {
   static const _wakeReminderId = 0;
   static const _wakeSnoozeId = 1;
   static const _rangeSize = 0x3fffffff;
+  // One break at a time, so one fixed slot (start-range candidates make a
+  // clash a one-in-a-billion event; pending IDs are probed anyway).
+  static const _breakAlarmId = 2;
+  // A repeating alert must never ring forever on an unattended phone.
+  static const _alarmTimeoutMs = 180000;
 
   AndroidFlutterLocalNotificationsPlugin? get _android => _plugin
       .resolvePlatformSpecificImplementation<
@@ -117,14 +125,75 @@ class NotificationService {
     throw StateError('Notification ID range exhausted');
   }
 
+  Future<AlertStyle> _styleFor(AlertEvent event) async {
+    try {
+      return (await DatabaseService.instance.getSettings()).alertFor(event);
+    } catch (_) {
+      return AlertStyle.defaultFor(event);
+    }
+  }
+
+  /// Android fixes sound/importance per channel at creation, so every
+  /// event + sound + vibration combination gets its own deterministic channel.
+  AndroidNotificationDetails _androidDetails(
+    AlertEvent? event,
+    AlertStyle? style,
+  ) {
+    if (event == null || style == null) {
+      return const AndroidNotificationDetails(
+        _channelId,
+        _channelName,
+        importance: Importance.high,
+        priority: Priority.high,
+      );
+    }
+    final alarm = style.sound == AlertSound.alarm;
+    final silent = style.sound == AlertSound.silent;
+    final loop = style.repeat && !silent;
+    return AndroidNotificationDetails(
+      'wf_${event.name}_${style.sound.name}_${style.vibrate ? 'vib' : 'novib'}',
+      'WakeFlow: ${event.label}',
+      channelDescription: 'Alerts for: ${event.label}',
+      importance: silent
+          ? Importance.defaultImportance
+          : alarm
+          ? Importance.max
+          : Importance.high,
+      priority: Priority.high,
+      playSound: !silent,
+      sound: alarm
+          ? const UriAndroidNotificationSound(
+              'content://settings/system/alarm_alert',
+            )
+          : null,
+      enableVibration: style.vibrate,
+      audioAttributesUsage: alarm
+          ? AudioAttributesUsage.alarm
+          : AudioAttributesUsage.notification,
+      category: alarm
+          ? AndroidNotificationCategory.alarm
+          : AndroidNotificationCategory.reminder,
+      // FLAG_INSISTENT (4): the sound loops until the notification is opened,
+      // swiped away or times out.
+      additionalFlags: loop ? Int32List.fromList(<int>[4]) : null,
+      timeoutAfter: loop ? _alarmTimeoutMs : null,
+    );
+  }
+
   Future<void> _schedule({
     required int id,
     required String title,
     required String body,
     required DateTime when,
     String? payload,
+    AlertEvent? event,
   }) async {
     if (!when.isAfter(_now())) return;
+    AlertStyle? style;
+    if (event != null) {
+      style = await _styleFor(event);
+      if (!style.enabled) return;
+    }
     final android = _android;
     if (await android?.areNotificationsEnabled() == false) {
       throw PlatformException(
@@ -140,14 +209,7 @@ class NotificationService {
       title,
       body,
       tz.TZDateTime.from(when, tz.UTC),
-      const NotificationDetails(
-        android: AndroidNotificationDetails(
-          _channelId,
-          _channelName,
-          importance: Importance.high,
-          priority: Priority.high,
-        ),
-      ),
+      NotificationDetails(android: _androidDetails(event, style)),
       androidScheduleMode: mode,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
@@ -183,6 +245,7 @@ class NotificationService {
         body: '${block.plannedDurationMinutes} دقیقه',
         when: block.plannedStart!,
         payload: _payload(block.id, false),
+        event: AlertEvent.blockStart,
       );
     }
   });
@@ -227,6 +290,7 @@ class NotificationService {
           body: 'وقت رفتن به بلاک بعدی است',
           when: when,
           payload: _payload(block.id, true),
+          event: AlertEvent.blockEnd,
         );
       });
 
@@ -335,6 +399,7 @@ class NotificationService {
         body: 'Open Today to review your progress.',
         when: when,
         payload: payload,
+        event: AlertEvent.checkpoint,
       );
     }
   });
@@ -344,6 +409,30 @@ class NotificationService {
         await init();
         await _cancelCheckpoints(day);
       });
+
+  /// Alarm-style alert when a break ends. Replaces any earlier one; the
+  /// default style loops its sound (bounded) until the user reacts.
+  Future<void> scheduleBreakEnd({
+    required DateTime when,
+    required String nextTitle,
+  }) => _serial(() async {
+    await init();
+    await _plugin.cancel(_breakAlarmId);
+    await _schedule(
+      id: _breakAlarmId,
+      title: 'Break over',
+      body: 'Time to start $nextTitle',
+      when: when,
+      payload: jsonEncode(['wakeflow-break-v1']),
+      event: AlertEvent.breakEnd,
+    );
+  });
+
+  /// Cancels a pending break alert and silences one that is already ringing.
+  Future<void> cancelBreakAlarm() => _serial(() async {
+    await init();
+    await _plugin.cancel(_breakAlarmId);
+  });
 
   /// Next occurrence only, renewed on launch or wake-time edit. No UTC repeat:
   /// a device IANA zone/native timezone integration is needed for true daily

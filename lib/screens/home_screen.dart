@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'wake_screen.dart';
@@ -9,6 +11,7 @@ import '../models/block.dart';
 import '../models/category.dart';
 import '../services/active_day.dart';
 import '../services/database_service.dart';
+import '../services/checkpoint_gate.dart';
 import '../services/day_key.dart';
 import '../services/greeting.dart';
 import '../services/notification_service.dart';
@@ -37,7 +40,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+  Timer? _gateTimer;
   bool _checking = true;
   int _tabIndex = 0;
 
@@ -76,7 +80,77 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _gateTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => unawaited(_maybeOpenForCheckpoint()),
+    );
     _checkForTodayRoutine();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _gateTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && !_opening) {
+      unawaited(_checkForTodayRoutine());
+    }
+  }
+
+  /// A checkpoint that is due must be reviewed before anything else: Today
+  /// opens at once and forces the review (see CheckpointGate). This also
+  /// covers a dismissed or missed notification, since it reads saved data.
+  Future<void> _maybeOpenForCheckpoint() async {
+    if (!mounted || _opening || _distilling || widget.loadRoutine != null) {
+      return;
+    }
+    final routine = _routine;
+    if (routine == null ||
+        !routine.blocks.any(
+          (b) =>
+              b.status == BlockStatus.pending ||
+              b.status == BlockStatus.active ||
+              b.status == BlockStatus.paused,
+        )) {
+      return;
+    }
+    try {
+      final db = DatabaseService.instance;
+      final settings = await db.getSettings();
+      final meta = await db.getDayMeta(routine.day);
+      if (meta == null) return;
+      final reviews = await db.getCheckpoints(routine.day);
+      final ends = routine.blocks
+          .map((b) => b.plannedEnd)
+          .whereType<DateTime>()
+          .toList()
+        ..sort();
+      final date = DateTime.parse(routine.day);
+      final end =
+          meta.$3 ??
+          (ends.isNotEmpty
+              ? ends.last
+              : DateTime(date.year, date.month, date.day + 1));
+      final due = CheckpointGate.dueAt(
+        minutesOfDay: settings.checkpointMinutesOfDay,
+        wake: meta.$2,
+        dayEnd: end,
+        now: _now,
+        lastReviewAt: reviews.isEmpty
+            ? null
+            : DateTime.tryParse('${reviews.first['reviewedAt']}'),
+      );
+      if (due != null && mounted && !_opening) {
+        await _openTodayScreen(context);
+      }
+    } catch (_) {
+      // A failed check is retried on the next tick or resume.
+    }
   }
 
   Future<void> _checkForTodayRoutine() async {
@@ -92,6 +166,7 @@ class _HomeScreenState extends State<HomeScreen> {
             : null;
         _checking = false;
       });
+      unawaited(_maybeOpenForCheckpoint());
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -211,6 +286,7 @@ class _HomeScreenState extends State<HomeScreen> {
         blocks: result.blocks,
       );
       try {
+        await NotificationService.instance.cancelBreakAlarm();
         await NotificationService.instance.cancelForBlocks(
           blocks
               .where(

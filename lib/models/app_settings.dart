@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'alert_style.dart';
+
 /// How the distillation keep-threshold is expressed.
 enum DistillKeepMode { minutes, percent }
 
@@ -22,6 +24,9 @@ class AppSettings {
   /// Minutes after midnight at which a new day starts (default 04:00).
   final int dayResetMinutes;
 
+  /// Per-event alert styles; events not listed use [AlertStyle.defaultFor].
+  final Map<AlertEvent, AlertStyle> alerts;
+
   const AppSettings({
     this.bufferMinutes = 10,
     this.wakeReminderHour = 8,
@@ -31,7 +36,11 @@ class AppSettings {
     this.distillKeepMode = DistillKeepMode.minutes,
     this.distillKeepValue = 5,
     this.dayResetMinutes = 240,
+    this.alerts = const {},
   });
+
+  AlertStyle alertFor(AlertEvent event) =>
+      alerts[event] ?? AlertStyle.defaultFor(event);
 
   AppSettings copyWith({
     int? bufferMinutes,
@@ -42,6 +51,7 @@ class AppSettings {
     DistillKeepMode? distillKeepMode,
     int? distillKeepValue,
     int? dayResetMinutes,
+    Map<AlertEvent, AlertStyle>? alerts,
   }) {
     return AppSettings(
       bufferMinutes: bufferMinutes ?? this.bufferMinutes,
@@ -54,6 +64,7 @@ class AppSettings {
       distillKeepMode: distillKeepMode ?? this.distillKeepMode,
       distillKeepValue: distillKeepValue ?? this.distillKeepValue,
       dayResetMinutes: dayResetMinutes ?? this.dayResetMinutes,
+      alerts: alerts ?? this.alerts,
     );
   }
 
@@ -103,6 +114,9 @@ class AppSettings {
       'distillKeepMode': distillKeepMode.name,
       'distillKeepValue': distillKeepValue,
       'dayResetMinutes': dayResetMinutes,
+      'alerts': jsonEncode({
+        for (final e in alerts.entries) e.key.name: e.value.toJson(),
+      }),
     };
   }
 
@@ -124,7 +138,26 @@ class AppSettings {
       ),
       distillKeepValue: map['distillKeepValue'] as int? ?? 5,
       dayResetMinutes: ((map['dayResetMinutes'] as int?) ?? 240).clamp(0, 1439),
+      alerts: _parseAlerts(map['alerts']),
     );
+  }
+
+  static Map<AlertEvent, AlertStyle> _parseAlerts(Object? raw) {
+    if (raw is! String || raw.isEmpty) return const {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return const {};
+      return {
+        for (final event in AlertEvent.values)
+          if (decoded[event.name] is Map)
+            event: AlertStyle.fromJson(
+              Map<String, Object?>.from(decoded[event.name] as Map),
+              AlertStyle.defaultFor(event),
+            ),
+      };
+    } catch (_) {
+      return const {};
+    }
   }
 
   static List<int> _parseCheckpoints(String? text) {
