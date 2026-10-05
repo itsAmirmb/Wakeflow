@@ -211,12 +211,19 @@ class DatabaseService {
     required String id, required String day, required CheckpointReport report,
     required Map<String, CheckpointAssessment> assessments,
     required String note, List<Block>? proposed,
+    // Progress summary of a checkpoint distillation, stored in the report.
+    Map<String, Object?>? distill,
+    // Pins the deadline when blocks are replaced, so it can't shift with them.
+    DateTime? persistDayEnd,
   }) async {
     final db = await database;
     await db.transaction((txn) async {
       await txn.insert('checkpoints', {
         'id': id, 'day': day, 'reviewedAt': report.now.toIso8601String(),
-        'report': jsonEncode(report.toJson()),
+        'report': jsonEncode({
+          ...report.toJson(),
+          if (distill != null) 'distill': distill,
+        }),
         'assessments': jsonEncode(assessments.map((k, v) => MapEntry(k, v.name))),
         'note': note, 'recalculated': proposed == null ? 0 : 1,
       });
@@ -224,6 +231,14 @@ class DatabaseService {
         await txn.delete('blocks', where: 'day = ?', whereArgs: [day]);
         for (final block in proposed) {
           await txn.insert('blocks', block.toMap(day: day));
+        }
+        if (persistDayEnd != null) {
+          await txn.update(
+            'day_meta',
+            {'dayEnd': persistDayEnd.toIso8601String()},
+            where: 'day = ? AND dayEnd IS NULL',
+            whereArgs: [day],
+          );
         }
       }
     });

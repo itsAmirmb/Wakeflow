@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import '../models/day_mode.dart';
 import '../models/app_settings.dart';
 import '../models/checkpoint_report.dart';
+import '../models/progress_report.dart';
+import 'progress_report_screen.dart';
 import 'checkpoint_screen.dart';
 import 'checkpoint_history_screen.dart';
 import '../models/block.dart';
@@ -331,6 +333,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
         now: _now, dayEnd: dayEnd);
       final id = '${widget.day}-${DateTime.now().microsecondsSinceEpoch}';
       DateTime? previewedAt;
+      ProgressReport? progress;
       final saved = await Navigator.push<bool>(context, MaterialPageRoute(
         builder: (_) => CheckpointScreen(
           report: report,
@@ -340,6 +343,67 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
               currentBlocks: _blocks, categories: widget.categories,
               now: previewedAt!, dayEnd: dayEnd,
               bufferMinutes: settings.bufferMinutes);
+          },
+          distillPreview: () {
+            previewedAt = _now;
+            return RoutineEngine.distill(
+              currentBlocks: _blocks,
+              now: previewedAt!,
+              settings: settings,
+            );
+          },
+          saveDistill: (assessments, note, result) async {
+            // Same freshness rule as a new plan: never apply a different
+            // distillation than the one previewed.
+            if (previewedAt == null ||
+                _now.difference(previewedAt!).inSeconds >= 60) {
+              throw StateError('Preview expired. Go back and preview again.');
+            }
+            final before = List<Block>.of(_blocks);
+            final built = ProgressReport.build(
+              before: before,
+              result: result,
+              categories: widget.categories.where((c) => c.enabled).toList(),
+              now: _now,
+              dayEnd: dayEnd,
+              assessments: assessments,
+              note: note,
+            );
+            // Checkpoint row, block replacement and the pinned deadline are
+            // one transaction, so a failure leaves the day untouched.
+            await _db.saveCheckpoint(
+              id: id,
+              day: widget.day,
+              report: report,
+              assessments: assessments,
+              note: note,
+              proposed: result.blocks,
+              distill: built.toJson(),
+              persistDayEnd: dayEnd,
+            );
+            progress = built;
+            if (mounted) {
+              _stopTicking();
+              setState(() {
+                _reviewCount = (_reviewCount ?? 0) + 1;
+                _blocks = List<Block>.of(result.blocks);
+              });
+            }
+            try {
+              await NotificationService.instance.cancelForBlocks(
+                before
+                    .where(
+                      (b) =>
+                          b.status != BlockStatus.completed &&
+                          b.status != BlockStatus.partial,
+                    )
+                    .toList(),
+              );
+            } catch (_) {
+              _showError(
+                'Distilled and saved, but block reminders could not be updated.',
+              );
+            }
           },
           save: (assessments, note, proposed) async {
             // Never silently apply a different plan than the one previewed.
@@ -368,7 +432,18 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
           },
         ),
       ));
-      if (saved == true) await _refreshCheckpoints();
+      if (saved == true) {
+        await _refreshCheckpoints();
+        final distilled = progress;
+        if (distilled != null && mounted) {
+          await Navigator.push<void>(
+            context,
+            MaterialPageRoute(
+              builder: (_) => ProgressReportScreen(report: distilled),
+            ),
+          );
+        }
+      }
     } catch (error) {
       _showError('Could not open checkpoint. $error');
     } finally {

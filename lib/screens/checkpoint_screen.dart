@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../models/block.dart';
 import '../models/checkpoint_report.dart';
+import '../services/routine_engine.dart';
+import '../widgets/block_status_style.dart';
 
 /// Collects reflection separately from recorded timer progress. Planning is
 /// opt-in, and only the injected save boundary can persist anything.
@@ -11,6 +13,8 @@ class CheckpointScreen extends StatefulWidget {
     required this.report,
     required this.previewFuture,
     required this.save,
+    this.distillPreview,
+    this.saveDistill,
   });
 
   final CheckpointReport report;
@@ -22,6 +26,17 @@ class CheckpointScreen extends StatefulWidget {
   )
   save;
 
+  /// Optional: lets the review end with a distillation (keep real work, drop
+  /// the rest) instead of re-planning. The Distill button only shows when
+  /// both callbacks are provided.
+  final DistillResult Function()? distillPreview;
+  final Future<void> Function(
+    Map<String, CheckpointAssessment> assessments,
+    String note,
+    DistillResult result,
+  )?
+  saveDistill;
+
   @override
   State<CheckpointScreen> createState() => _CheckpointScreenState();
 }
@@ -31,6 +46,7 @@ class _CheckpointScreenState extends State<CheckpointScreen> {
   final _note = TextEditingController();
   final _assessments = <String, CheckpointAssessment>{};
   List<Block>? _proposed;
+  DistillResult? _distill;
   bool _saving = false;
   bool _saved = false;
 
@@ -57,7 +73,7 @@ class _CheckpointScreenState extends State<CheckpointScreen> {
   }
 
   void _preview() {
-    if (!mounted || _saving || _proposed != null) return;
+    if (!mounted || _saving || _proposed != null || _distill != null) return;
     if (!_validateAssessments()) return;
     FocusScope.of(context).unfocus();
     try {
@@ -70,13 +86,58 @@ class _CheckpointScreenState extends State<CheckpointScreen> {
 
   void _cancelPreview() {
     if (!mounted || _saving) return;
-    setState(() => _proposed = null);
+    setState(() {
+      _proposed = null;
+      _distill = null;
+    });
+  }
+
+  void _previewDistill() {
+    if (!mounted || _saving || _proposed != null || _distill != null) return;
+    if (!_validateAssessments()) return;
+    FocusScope.of(context).unfocus();
+    try {
+      final result = widget.distillPreview!();
+      if (result.discarded.isEmpty) {
+        _showError('Nothing to distill — every block already holds real progress.');
+        return;
+      }
+      setState(() => _distill = result);
+    } catch (_) {
+      _showError('Could not preview the distillation. Please try again.');
+    }
+  }
+
+  Future<void> _saveDistill() async {
+    final distill = _distill;
+    if (!mounted || _saving || _saved || distill == null) return;
+    if (!_validateAssessments()) return;
+    FocusScope.of(context).unfocus();
+    setState(() => _saving = true);
+    try {
+      await widget.saveDistill!(
+        Map<String, CheckpointAssessment>.unmodifiable(_assessments),
+        _note.text,
+        distill,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      _showError(
+        'Could not save the checkpoint. Your answers are kept. Try again.',
+      );
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _saved = true);
+    await WidgetsBinding.instance.endOfFrame;
+    if (mounted) Navigator.pop(context, true);
   }
 
   Future<void> _save({required bool withProposal}) async {
     if (!mounted || _saving || _saved) return;
     // Stale button callbacks may not switch between save modes.
-    if (withProposal != (_proposed != null)) return;
+    if (_distill != null || withProposal != (_proposed != null)) return;
     if (!_validateAssessments()) return;
     FocusScope.of(context).unfocus();
     setState(() => _saving = true);
@@ -104,20 +165,28 @@ class _CheckpointScreenState extends State<CheckpointScreen> {
   @override
   Widget build(BuildContext context) {
     final proposed = _proposed;
-    final editing = !_saving && proposed == null;
+    final distill = _distill;
+    final inPreview = proposed != null || distill != null;
+    final editing = !_saving && !inPreview;
     return PopScope<bool>(
-      canPop: _saved || (!_saving && proposed == null),
+      canPop: _saved || (!_saving && !inPreview),
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop && !_saving && proposed != null) _cancelPreview();
+        if (!didPop && !_saving && inPreview) _cancelPreview();
       },
       child: Scaffold(
         appBar: AppBar(
-          title: Text(proposed == null ? 'Checkpoint' : 'New plan preview'),
+          title: Text(
+            distill != null
+                ? 'Distill preview'
+                : proposed == null
+                ? 'Checkpoint'
+                : 'New plan preview',
+          ),
           leading: BackButton(
             onPressed: _saving
                 ? null
                 : () {
-                    if (proposed != null) {
+                    if (inPreview) {
                       _cancelPreview();
                     } else {
                       Navigator.maybePop(context);
@@ -239,6 +308,61 @@ class _CheckpointScreenState extends State<CheckpointScreen> {
                     subtitle: Text('${block.plannedDurationMinutes} min'),
                   ),
               ],
+              if (distill != null) ...[
+                const SizedBox(height: 24),
+                Text(
+                  'Distillation preview',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const Text(
+                  'Nothing has been saved yet. Confirming keeps the work you '
+                  'really did and removes everything else. Your progress '
+                  'report is shown right after; plan the rest of the day with '
+                  'Start Day.',
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Kept · ${distill.completed.length} done, '
+                  '${distill.partial.length} partial '
+                  '(${distill.partialSeconds ~/ 60} min)',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                if (distill.blocks.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: Text('Nothing is kept yet.'),
+                  ),
+                for (final block in distill.blocks)
+                  ListTile(
+                    key: ValueKey('kept-${block.id}'),
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    leading: const Icon(Icons.check_circle_outline),
+                    title: Text(block.title),
+                    subtitle: Text(
+                      '${block.recordedSeconds ~/ 60} min on timer · '
+                      '${BlockStatusStyle.of(context, block.status).label}',
+                    ),
+                  ),
+                const SizedBox(height: 12),
+                Text(
+                  'Discarded · ${distill.discarded.length} block(s), '
+                  '${distill.discardedPlannedMinutes} min planned',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                for (final block in distill.discarded)
+                  ListTile(
+                    key: ValueKey('discarded-${block.id}'),
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    leading: const Icon(Icons.remove_circle_outline),
+                    title: Text(block.title),
+                    subtitle: Text(
+                      '${block.plannedDurationMinutes} min planned · '
+                      '${BlockStatusStyle.of(context, block.status).label}',
+                    ),
+                  ),
+              ],
             ],
           ),
         ),
@@ -254,7 +378,7 @@ class _CheckpointScreenState extends State<CheckpointScreen> {
                   const SizedBox(height: 8),
                   const Text('Saving checkpoint…', textAlign: TextAlign.center),
                 ],
-                if (proposed == null) ...[
+                if (!inPreview) ...[
                   FilledButton(
                     onPressed: _saving
                         ? null
@@ -264,6 +388,22 @@ class _CheckpointScreenState extends State<CheckpointScreen> {
                   OutlinedButton(
                     onPressed: _saving ? null : _preview,
                     child: const Text('Preview new plan'),
+                  ),
+                  if (widget.distillPreview != null &&
+                      widget.saveDistill != null)
+                    OutlinedButton.icon(
+                      onPressed: _saving ? null : _previewDistill,
+                      icon: const Icon(Icons.science_outlined),
+                      label: const Text('Distill & see report'),
+                    ),
+                ] else if (distill != null) ...[
+                  FilledButton(
+                    onPressed: _saving ? null : _saveDistill,
+                    child: const Text('Confirm distill & save'),
+                  ),
+                  OutlinedButton(
+                    onPressed: _saving ? null : _cancelPreview,
+                    child: const Text('Cancel preview'),
                   ),
                 ] else ...[
                   FilledButton(
