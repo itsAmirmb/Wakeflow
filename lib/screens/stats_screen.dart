@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/stats_service.dart';
-import '../services/day_key.dart';
+import '../services/active_day.dart';
+import '../services/database_service.dart';
 import '../widgets/empty_state.dart';
 
 class StatsScreen extends StatefulWidget {
@@ -32,9 +33,17 @@ class _StatsScreenState extends State<StatsScreen>
   }
 
   Future<void> _load() async {
-    final today = dayKey(DateTime.now());
+    // "Today" follows the day-reset time, like Home does.
+    final today = await ActiveDay.resolve(
+      DatabaseService.instance,
+      DateTime.now(),
+    );
+    final parsed = DateTime.parse(today);
     final daily = await StatsService.instance.getDailyStats(today);
-    final weekly = await StatsService.instance.getWeeklyStats();
+    // Noon avoids DST edge cases when stepping back whole days.
+    final weekly = await StatsService.instance.getWeeklyStats(
+      today: DateTime(parsed.year, parsed.month, parsed.day, 12),
+    );
     if (!mounted) return;
     setState(() {
       _daily = daily;

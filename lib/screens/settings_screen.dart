@@ -172,6 +172,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await _saveSettings(_settings.copyWith(checkpointMinutesOfDay: times));
   }
 
+  Future<void> _pickDayReset() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(
+        hour: _settings.dayResetMinutes ~/ 60,
+        minute: _settings.dayResetMinutes % 60,
+      ),
+    );
+    if (picked == null || !mounted) return;
+    _saveSettings(
+      _settings.copyWith(dayResetMinutes: picked.hour * 60 + picked.minute),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final categories = _categories;
@@ -383,6 +397,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _settings.copyWith(distillKeepValue: value.round()),
               ),
             ),
+          ),
+          const Divider(height: 32),
+          ListTile(
+            leading: const Icon(Icons.event_repeat),
+            title: const Text('New day starts at'),
+            subtitle: const Text(
+              'Your routine resets at this time. If it is still unfinished, '
+              'it carries over until you finish it or Distill.',
+            ),
+            trailing: Text(
+              TimeOfDay(
+                hour: _settings.dayResetMinutes ~/ 60,
+                minute: _settings.dayResetMinutes % 60,
+              ).format(context),
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            onTap: _pickDayReset,
           ),
           const Divider(height: 32),
           const Padding(

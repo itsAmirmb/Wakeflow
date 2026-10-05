@@ -39,7 +39,7 @@ class DatabaseService {
 
     return openDatabase(
       path,
-      version: 9,
+      version: 10,
       onCreate: createSchema,
       onUpgrade: upgradeSchema,
     );
@@ -187,6 +187,15 @@ class DatabaseService {
         'INTEGER NOT NULL DEFAULT 5',
       );
     }
+    // v9 -> v10: configurable day-reset time (default 04:00).
+    if (oldVersion < 10) {
+      await ensureColumn(
+        db,
+        'settings',
+        'dayResetMinutes',
+        'INTEGER NOT NULL DEFAULT 240',
+      );
+    }
   }
 
   static Future<void> _createCheckpointsTable(DatabaseExecutor db) async {
@@ -251,7 +260,8 @@ class DatabaseService {
         themeMode TEXT NOT NULL DEFAULT 'system',
         checkpointTimes TEXT NOT NULL DEFAULT '[]',
         distillKeepMode TEXT NOT NULL DEFAULT 'minutes',
-        distillKeepValue INTEGER NOT NULL DEFAULT 5
+        distillKeepValue INTEGER NOT NULL DEFAULT 5,
+        dayResetMinutes INTEGER NOT NULL DEFAULT 240
       )
     ''');
   }
@@ -392,6 +402,22 @@ class DatabaseService {
       }
       await batch.commit(noResult: true);
     });
+  }
+
+  /// Most recent day before [beforeDay] that still has blocks waiting to run
+  /// (pending, active or paused). Such a routine carries over past the day
+  /// reset time until it is finished or distilled.
+  Future<String?> latestUnfinishedDayBefore(String beforeDay) async {
+    final db = await database;
+    final rows = await db.query(
+      'blocks',
+      columns: ['DISTINCT day'],
+      where: "day < ? AND status IN ('pending', 'active', 'paused')",
+      whereArgs: [beforeDay],
+      orderBy: 'day DESC',
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first['day'] as String;
   }
 
   /// All distinct days that have blocks, excluding [today] — this is

@@ -19,6 +19,9 @@ class AppSettings {
   final DistillKeepMode distillKeepMode;
   final int distillKeepValue; // minutes, or percent of the block (0-100)
 
+  /// Minutes after midnight at which a new day starts (default 04:00).
+  final int dayResetMinutes;
+
   const AppSettings({
     this.bufferMinutes = 10,
     this.wakeReminderHour = 8,
@@ -27,6 +30,7 @@ class AppSettings {
     this.checkpointMinutesOfDay = const [],
     this.distillKeepMode = DistillKeepMode.minutes,
     this.distillKeepValue = 5,
+    this.dayResetMinutes = 240,
   });
 
   AppSettings copyWith({
@@ -37,6 +41,7 @@ class AppSettings {
     List<int>? checkpointMinutesOfDay,
     DistillKeepMode? distillKeepMode,
     int? distillKeepValue,
+    int? dayResetMinutes,
   }) {
     return AppSettings(
       bufferMinutes: bufferMinutes ?? this.bufferMinutes,
@@ -48,6 +53,7 @@ class AppSettings {
       ),
       distillKeepMode: distillKeepMode ?? this.distillKeepMode,
       distillKeepValue: distillKeepValue ?? this.distillKeepValue,
+      dayResetMinutes: dayResetMinutes ?? this.dayResetMinutes,
     );
   }
 
@@ -73,7 +79,7 @@ class AppSettings {
     if (elapsed.inSeconds <= 0) return false;
     return elapsed.inSeconds >= keepThreshold(plannedMinutes).inSeconds;
   }
-
+  
   /// Ignore invalid stored entries and keep clock times unique and sorted.
   static List<int> _normalizeCheckpoints(Iterable<Object?> minutes) {
     final valid = minutes
@@ -96,6 +102,7 @@ class AppSettings {
       ),
       'distillKeepMode': distillKeepMode.name,
       'distillKeepValue': distillKeepValue,
+      'dayResetMinutes': dayResetMinutes,
     };
   }
 
@@ -116,6 +123,7 @@ class AppSettings {
         orElse: () => DistillKeepMode.minutes,
       ),
       distillKeepValue: map['distillKeepValue'] as int? ?? 5,
+      dayResetMinutes: ((map['dayResetMinutes'] as int?) ?? 240).clamp(0, 1439),
     );
   }
 

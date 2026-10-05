@@ -353,8 +353,8 @@ class NotificationService {
         await init();
         await _schedule(
           id: _wakeReminderId,
-          title: 'بیدار شدی؟',
-          body: 'برای شروع روز ضربه بزن',
+          title: 'Ready to start your day?',
+          body: 'Tap to plan your day',
           when: nextLocalWallClockOccurrence(hour, minute, _now()),
         );
       });
@@ -364,8 +364,8 @@ class NotificationService {
     await init();
     await _schedule(
       id: _wakeSnoozeId,
-      title: 'بیدار شدی؟',
-      body: 'برای شروع روز ضربه بزن',
+      title: 'Ready to start your day?',
+      body: 'Tap to plan your day',
       when: _now().add(const Duration(minutes: 30)),
     );
   });

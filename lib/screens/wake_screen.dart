@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/routine_target.dart';
+import '../services/greeting.dart';
 import '../services/day_mode_calculator.dart';
 import '../services/notification_service.dart';
 import 'day_mode_screen.dart';
@@ -78,6 +79,7 @@ class _WakeScreenState extends State<WakeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final greeting = greetingFor(DateTime.now());
     return Scaffold(
       appBar: AppBar(title: const Text('WakeFlow')),
       body: Center(
@@ -86,7 +88,18 @@ class _WakeScreenState extends State<WakeScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text('بیدار شدی؟', style: TextStyle(fontSize: 28)),
+              Text(
+                '${greeting.text} ${greeting.emoji}',
+                style: const TextStyle(fontSize: 28),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Ready to start your day?',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
               const SizedBox(height: 32),
               // Target mode: how today's usable time gets bounded.
               // Chosen fresh each morning, not a fixed setting.

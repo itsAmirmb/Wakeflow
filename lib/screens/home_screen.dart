@@ -7,8 +7,10 @@ import 'stats_screen.dart';
 import '../models/day_mode.dart';
 import '../models/block.dart';
 import '../models/category.dart';
+import '../services/active_day.dart';
 import '../services/database_service.dart';
 import '../services/day_key.dart';
+import '../services/greeting.dart';
 import '../services/notification_service.dart';
 import '../services/routine_engine.dart';
 
@@ -22,8 +24,14 @@ typedef HomeRoutine = ({
 class HomeScreen extends StatefulWidget {
   final DateTime Function()? now;
   final Future<HomeRoutine?> Function(String day)? loadRoutine;
+  final Future<String> Function(DateTime now)? resolveDay;
 
-  const HomeScreen({super.key, this.now, this.loadRoutine});
+  const HomeScreen({
+    super.key,
+    this.now,
+    this.loadRoutine,
+    this.resolveDay,
+  });
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -40,6 +48,15 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _distilling = false;
 
   DateTime get _now => (widget.now ?? DateTime.now)();
+
+  /// The day whose routine Home shows: follows the reset time and carries an
+  /// unfinished routine over until it is finished or distilled.
+  Future<String> _resolveDay() {
+    if (widget.resolveDay != null) return widget.resolveDay!(_now);
+    // An injected loader means no database (tests): plain calendar day.
+    if (widget.loadRoutine != null) return Future.value(dayKey(_now));
+    return ActiveDay.resolve(DatabaseService.instance, _now);
+  }
 
   Future<HomeRoutine?> _loadRoutine(String day) async {
     if (widget.loadRoutine != null) return widget.loadRoutine!(day);
@@ -64,11 +81,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _checkForTodayRoutine() async {
     try {
-      final day = dayKey(_now);
+      final day = await _resolveDay();
       final routine = await _loadRoutine(day);
+      // The day can change while loading (reset time passing).
+      final dayAfter = await _resolveDay();
       if (!mounted) return;
       setState(() {
-        _routine = day == dayKey(_now) && routine?.blocks.isNotEmpty == true
+        _routine = day == dayAfter && routine?.blocks.isNotEmpty == true
             ? routine
             : null;
         _checking = false;
@@ -128,7 +147,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _distilling = true);
     try {
       final db = DatabaseService.instance;
-      final day = dayKey(_now);
+      final day = await _resolveDay();
       final meta = await db.getDayMeta(day);
       final blocks = await db.getBlocksForDay(day);
       if (meta == null || blocks.isEmpty) {
@@ -271,6 +290,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildHomeTab(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final hasTodayRoutine = _routine != null;
+    final greeting = greetingFor(_now);
     // Nothing left to run (e.g. after Distill): offer Start Day to plan more.
     final hasActionable =
         hasTodayRoutine &&
@@ -300,7 +320,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ? "Today's routine is ready"
                   : hasTodayRoutine
                   ? 'Plan the rest of your day'
-                  : 'Good morning 👋',
+                  : '${greeting.text} ${greeting.emoji}',
               style: Theme.of(context).textTheme.headlineSmall
                   ?.copyWith(fontWeight: FontWeight.w600),
               textAlign: TextAlign.center,

@@ -7,6 +7,7 @@ import '../models/routine_target.dart';
 import '../widgets/category_editor.dart';
 import '../services/routine_engine.dart';
 import '../services/database_service.dart';
+import '../services/active_day.dart';
 import '../services/day_key.dart';
 import '../services/notification_service.dart';
 import 'today_screen.dart';
@@ -89,7 +90,13 @@ class _DayModeScreenState extends State<DayModeScreen> {
     // Wake screen: a fixed clock time to finish by, or a fixed total
     // duration from wake time.
     final dayEnd = widget.target.endFrom(wakeTime);
-    final today = dayKey(wakeTime);
+    // The day follows the user's reset time, not midnight.
+    String today;
+    try {
+      today = await ActiveDay.resolve(DatabaseService.instance, wakeTime);
+    } catch (_) {
+      today = dayKey(wakeTime);
+    }
 
     // Planning again on the same day (e.g. after Distill) must never wipe
     // work that already happened: completed and partial blocks are kept and
@@ -197,7 +204,7 @@ class _DayModeScreenState extends State<DayModeScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Woke up at ${widget.wakeTime.hour}:${widget.wakeTime.minute.toString().padLeft(2, '0')}',
+                        'Started at ${widget.wakeTime.hour}:${widget.wakeTime.minute.toString().padLeft(2, '0')}',
                         style: TextStyle(
                           fontSize: 14,
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
