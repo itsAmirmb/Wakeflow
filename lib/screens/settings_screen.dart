@@ -14,6 +14,8 @@ class SettingsScreen extends StatefulWidget {
     this.loadSettings,
     this.persistSettings,
     this.persistCategory,
+    this.createCategory,
+    this.deleteCategory,
     this.scheduleWakeReminder,
   });
 
@@ -21,6 +23,8 @@ class SettingsScreen extends StatefulWidget {
   final Future<AppSettings> Function()? loadSettings;
   final Future<void> Function(AppSettings)? persistSettings;
   final Future<void> Function(Category)? persistCategory;
+  final Future<void> Function(Category)? createCategory;
+  final Future<void> Function(String id)? deleteCategory;
   final Future<void> Function(int hour, int minute)? scheduleWakeReminder;
 
   static bool wakeTimeChanged(AppSettings before, AppSettings after) =>
@@ -138,6 +142,77 @@ class _SettingsScreenState extends State<SettingsScreen> {
       });
     } catch (_) {
       _showError('Could not save category. Please try again.');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _addCategory() async {
+    final categories = _categories;
+    if (categories == null || _saving) return;
+    final created = await showDialog<Category>(
+      context: context,
+      builder: (_) => _NewCategoryDialog(existing: categories),
+    );
+    if (created == null || !mounted) return;
+    setState(() => _saving = true);
+    try {
+      await (widget.createCategory ?? DatabaseService.instance.saveCategory)(
+        created,
+      );
+      if (!mounted) return;
+      setState(() => _categories = [...categories, created]);
+    } catch (_) {
+      _showError('Could not add the category. Please try again.');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _deleteCategory(Category category) async {
+    final categories = _categories;
+    if (categories == null || _saving) return;
+    // Routines need at least one enabled category to plan with.
+    final othersEnabled = categories.any(
+      (c) => c.id != category.id && c.enabled,
+    );
+    if (!othersEnabled) {
+      _showError('Keep at least one other enabled category.');
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete ${category.name}?'),
+        content: const Text(
+          'Past days keep their history and stats. Blocks already planned '
+          'today stay until you Distill or re-plan at a checkpoint. '
+          'To keep the category but stop planning it, switch it off instead.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _saving = true);
+    try {
+      await (widget.deleteCategory ?? DatabaseService.instance.deleteCategory)(
+        category.id,
+      );
+      if (!mounted) return;
+      setState(
+        () => _categories = categories.where((c) => c.id != category.id).toList(),
+      );
+    } catch (_) {
+      _showError('Could not delete the category. Please try again.');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -416,20 +491,130 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: _pickDayReset,
           ),
           const Divider(height: 32),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 0, 16, 4),
-            child: Text(
-              'Categories',
-              style: TextStyle(fontWeight: FontWeight.bold),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Categories',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Add category',
+                  onPressed: _addCategory,
+                  icon: const Icon(Icons.add),
+                ),
+              ],
             ),
           ),
           ...categories.map(
-            (category) =>
-                CategoryEditorTile(category: category, onChanged: _saveCategory),
+            (category) => CategoryEditorTile(
+              key: ValueKey(category.id),
+              category: category,
+              onChanged: _saveCategory,
+              onDelete: () => _deleteCategory(category),
+            ),
           ),
           const SizedBox(height: 24),
         ],
       ),
+    );
+  }
+}
+
+/// Name + emoji for a new category; everything else starts at neutral
+/// defaults and is tuned in the category's own tile afterwards.
+class _NewCategoryDialog extends StatefulWidget {
+  final List<Category> existing;
+
+  const _NewCategoryDialog({required this.existing});
+
+  @override
+  State<_NewCategoryDialog> createState() => _NewCategoryDialogState();
+}
+
+class _NewCategoryDialogState extends State<_NewCategoryDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _name = TextEditingController();
+  final _icon = TextEditingController(text: '📌');
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _icon.dispose();
+    super.dispose();
+  }
+
+  String? _validateName(String? value) {
+    final name = (value ?? '').trim();
+    if (name.isEmpty) return 'Enter a name';
+    final taken = widget.existing.any(
+      (c) => c.name.trim().toLowerCase() == name.toLowerCase(),
+    );
+    return taken ? 'A category with this name already exists' : null;
+  }
+
+  void _submit() {
+    if (!_formKey.currentState!.validate()) return;
+    final icon = _icon.text.trim();
+    final nextPriority = widget.existing.fold<int>(
+          0,
+          (max, c) => c.priority > max ? c.priority : max,
+        ) +
+        1;
+    Navigator.pop(
+      context,
+      Category(
+        id: 'cat_${DateTime.now().microsecondsSinceEpoch}',
+        name: _name.text.trim(),
+        // One emoji only; the row layout assumes a single glyph.
+        icon: icon.isEmpty ? '📌' : icon.characters.first,
+        percentage: 0.2,
+        minimumMinutes: 0,
+        preferredBlockMinMinutes: 30,
+        preferredBlockMaxMinutes: 90,
+        priority: nextPriority,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New category'),
+      content: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextFormField(
+              controller: _name,
+              autofocus: true,
+              maxLength: 24,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(labelText: 'Name'),
+              validator: _validateName,
+              onFieldSubmitted: (_) => _submit(),
+            ),
+            TextFormField(
+              controller: _icon,
+              decoration: const InputDecoration(
+                labelText: 'Emoji',
+                helperText: 'Optional',
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Add')),
+      ],
     );
   }
 }

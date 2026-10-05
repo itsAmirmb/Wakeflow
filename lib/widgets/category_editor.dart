@@ -9,7 +9,15 @@ class CategoryEditorTile extends StatelessWidget {
   final Category category;
   final ValueChanged<Category> onChanged;
 
-  const CategoryEditorTile({super.key, required this.category, required this.onChanged});
+  /// When set, a Delete button is shown (Settings only).
+  final VoidCallback? onDelete;
+
+  const CategoryEditorTile({
+    super.key,
+    required this.category,
+    required this.onChanged,
+    this.onDelete,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -18,7 +26,8 @@ class CategoryEditorTile extends StatelessWidget {
       title: Text(category.name),
       subtitle: Text(
         '${(category.percentage * 100).round()}% · min ${category.minimumMinutes}m · '
-        'block ${category.preferredBlockMinMinutes}-${category.preferredBlockMaxMinutes}m',
+        'block ${category.preferredBlockMinMinutes}-${category.preferredBlockMaxMinutes}m'
+        '${category.maximumMinutes == null ? '' : ' · max ${category.maximumMinutes}m'}',
       ),
       trailing: Switch(
         value: category.enabled,
@@ -42,8 +51,35 @@ class CategoryEditorTile extends StatelessWidget {
           max: 180,
           divisions: 36,
           formatValue: (v) => '${v.round()}m',
-          onChangeEnd: (value) =>
-              onChanged(category.copyWith(minimumMinutes: value.round())),
+          // Raising the minimum past the maximum lifts the maximum with it.
+          onChangeEnd: (value) => onChanged(
+            category.copyWith(
+              minimumMinutes: value.round(),
+              maximumMinutes:
+                  category.maximumMinutes != null &&
+                      value.round() > category.maximumMinutes!
+                  ? value.round()
+                  : null,
+            ),
+          ),
+        ),
+        LabeledSlider(
+          label: 'Maximum per day',
+          value: (category.maximumMinutes ?? 0).toDouble(),
+          min: 0,
+          max: 480,
+          divisions: 32,
+          formatValue: (v) => v.round() == 0 ? 'No limit' : '${v.round()}m',
+          // 0 means no limit; otherwise never below the minimum.
+          onChangeEnd: (value) => onChanged(
+            value.round() == 0
+                ? category.copyWith(clearMaximum: true)
+                : category.copyWith(
+                    maximumMinutes: value.round() < category.minimumMinutes
+                        ? category.minimumMinutes
+                        : value.round(),
+                  ),
+          ),
         ),
         LabeledSlider(
           label: 'Preferred block — min',
@@ -67,6 +103,21 @@ class CategoryEditorTile extends StatelessWidget {
             category.copyWith(preferredBlockMaxMinutes: value.round()),
           ),
         ),
+        if (onDelete != null)
+          Align(
+            alignment: Alignment.centerRight,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: TextButton.icon(
+                onPressed: onDelete,
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('Delete category'),
+                style: TextButton.styleFrom(
+                  foregroundColor: Theme.of(context).colorScheme.error,
+                ),
+              ),
+            ),
+          ),
         const SizedBox(height: 8),
       ],
     );

@@ -64,9 +64,18 @@ class RoutineEngine {
     final enabled = categories.where((c) => c.enabled).toList();
     if (enabled.isEmpty) return {};
     final credited = [for (final c in enabled) credits[c.id] ?? 0];
+    // A category's maximum is a daily cap. A minimum above it is lowered to
+    // the cap, so the two can never contradict each other.
     final minimums = [
       for (var i = 0; i < enabled.length; i++)
-        math.max(0, enabled[i].minimumMinutes - credited[i]),
+        math.max(
+          0,
+          math.min(
+                enabled[i].minimumMinutes,
+                enabled[i].maximumMinutes ?? enabled[i].minimumMinutes,
+              ) -
+              credited[i],
+        ),
     ];
     final totalMinimum = minimums.fold<int>(0, (sum, value) => sum + value);
     if (totalMinimum > minutes) {
@@ -93,6 +102,14 @@ class RoutineEngine {
           c.percentage.isFinite && c.percentage > 0 ? c.percentage : 0,
       ],
       [for (var i = 0; i < enabled.length; i++) credited[i] + minimums[i]],
+      [
+        for (var i = 0; i < enabled.length; i++)
+          enabled[i].maximumMinutes == null
+              ? double.infinity
+              : math
+                    .max(enabled[i].maximumMinutes!, credited[i] + minimums[i])
+                    .toDouble(),
+      ],
     );
     return {
       for (var i = 0; i < enabled.length; i++)
@@ -100,13 +117,18 @@ class RoutineEngine {
     };
   }
 
-  /// Lower-bound weighted water filling followed by largest-remainder rounding.
-  /// Unlike independently rounded shares, this conserves the integer budget.
+  /// Weighted water filling with lower bounds and optional upper bounds,
+  /// followed by largest-remainder rounding. Unlike independently rounded
+  /// shares, this conserves the integer budget. Time that every category's
+  /// upper bound refuses is left unallocated instead of overfilling a cap.
   static List<int> _apportion(
     int total,
     List<double> weights,
-    List<int> lowerBounds,
-  ) {
+    List<int> lowerBounds, [
+    List<double>? upperBounds,
+  ]) {
+    final upper =
+        upperBounds ?? List<double>.filled(weights.length, double.infinity);
     final largestWeight = weights.fold<double>(0, math.max);
     // Scaling first prevents a sum of large finite weights from overflowing.
     final normalized = [
@@ -121,21 +143,43 @@ class RoutineEngine {
         0,
         (sum, i) => sum + normalized[i],
       );
-      final fixed = [
-        for (final i in pending)
-          if (normalized[i] == 0 ||
-              remaining * normalized[i] / weightSum < lowerBounds[i])
-            i,
-      ];
-      if (fixed.isEmpty) {
+      final zeroWeight = <int>[];
+      final low = <int>[];
+      final high = <int>[];
+      var lowExcess = 0.0;
+      var highExcess = 0.0;
+      for (final i in pending) {
+        if (normalized[i] == 0) {
+          zeroWeight.add(i);
+          continue;
+        }
+        final share = remaining * normalized[i] / weightSum;
+        if (share < lowerBounds[i]) {
+          low.add(i);
+          lowExcess += lowerBounds[i] - share;
+        } else if (share > upper[i]) {
+          high.add(i);
+          highExcess += share - upper[i];
+        }
+      }
+      if (zeroWeight.isEmpty && low.isEmpty && high.isEmpty) {
         for (final i in pending) {
           targets[i] = remaining * normalized[i] / weightSum;
         }
         break;
       }
-      for (final i in fixed) {
+      // Clamp only the side with the larger violation first, then
+      // redistribute and re-check (standard clamped water filling).
+      final toLower = [...zeroWeight, if (lowExcess >= highExcess) ...low];
+      final toUpper = [if (highExcess >= lowExcess) ...high];
+      for (final i in toLower) {
         targets[i] = lowerBounds[i].toDouble();
         remaining -= lowerBounds[i];
+        pending.remove(i);
+      }
+      for (final i in toUpper) {
+        targets[i] = upper[i];
+        remaining -= upper[i].toInt();
         pending.remove(i);
       }
     }
@@ -147,9 +191,22 @@ class RoutineEngine {
         );
         return comparison != 0 ? comparison : a.compareTo(b);
       });
-    final remainder = total - result.fold<int>(0, (sum, value) => sum + value);
-    for (var i = 0; i < remainder; i++) {
-      result[order[i % order.length]]++;
+    final targetTotal = upperBounds == null
+        ? total
+        : targets.fold<double>(0, (sum, t) => sum + t).round();
+    var remainder = targetTotal - result.fold<int>(0, (sum, v) => sum + v);
+    var index = 0;
+    var skipped = 0;
+    while (remainder > 0 && skipped < order.length) {
+      final i = order[index % order.length];
+      index++;
+      if (result[i] < upper[i]) {
+        result[i]++;
+        remainder--;
+        skipped = 0;
+      } else {
+        skipped++;
+      }
     }
     return result;
   }
@@ -256,7 +313,10 @@ class RoutineEngine {
         (sum, category) =>
             sum + _blockCount(category, allocation[category.id]!),
       );
-      if (budget + math.max(0, count - 1) * gap <= window) {
+      // Category maximums can leave part of the budget unallocated, so fit
+      // what is really planned (equal to [budget] when nothing is capped).
+      final planned = allocation.values.fold<int>(0, (sum, v) => sum + v);
+      if (planned + math.max(0, count - 1) * gap <= window) {
         return placeOnTimeline(
           blocks: _split(enabled, allocation, excludedIds),
           startTime: startTime,

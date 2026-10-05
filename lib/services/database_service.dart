@@ -39,7 +39,7 @@ class DatabaseService {
 
     return openDatabase(
       path,
-      version: 10,
+      version: 11,
       onCreate: createSchema,
       onUpgrade: upgradeSchema,
     );
@@ -82,7 +82,8 @@ class DatabaseService {
         preferredBlockMinMinutes INTEGER NOT NULL,
         preferredBlockMaxMinutes INTEGER NOT NULL,
         priority INTEGER NOT NULL,
-        enabled INTEGER NOT NULL
+        enabled INTEGER NOT NULL,
+        maximumMinutes INTEGER
       )
     ''');
 
@@ -186,6 +187,10 @@ class DatabaseService {
         'distillKeepValue',
         'INTEGER NOT NULL DEFAULT 5',
       );
+    }
+    // v10 -> v11: optional per-category daily maximum (NULL = no limit).
+    if (oldVersion < 11) {
+      await ensureColumn(db, 'categories', 'maximumMinutes', 'INTEGER');
     }
     // v9 -> v10: configurable day-reset time (default 04:00).
     if (oldVersion < 10) {
@@ -319,6 +324,13 @@ class DatabaseService {
   /// insert-or-replace as saveCategory, used when editing an existing
   /// category rather than seeding a new one.
   Future<void> updateCategory(Category category) => saveCategory(category);
+
+  /// Removes a category. Its past blocks are kept: Stats and reports rebuild
+  /// the category from the blocks' own category id and title.
+  Future<void> deleteCategory(String id) async {
+    final db = await database;
+    await db.delete('categories', where: 'id = ?', whereArgs: [id]);
+  }
 
   // ---------- Blocks ----------
 

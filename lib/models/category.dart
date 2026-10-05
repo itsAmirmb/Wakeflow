@@ -9,6 +9,10 @@ class Category {
   final int priority;
   final bool enabled;
 
+  /// Most minutes per day this category may take (credited work included).
+  /// null means no limit; time it cannot take is simply left unplanned.
+  final int? maximumMinutes;
+
   const Category({
     required this.id,
     required this.name,
@@ -19,6 +23,7 @@ class Category {
     required this.preferredBlockMaxMinutes,
     this.priority = 0,
     this.enabled = true,
+    this.maximumMinutes,
   });
 
   Category copyWith({
@@ -30,6 +35,8 @@ class Category {
     int? preferredBlockMaxMinutes,
     int? priority,
     bool? enabled,
+    int? maximumMinutes,
+    bool clearMaximum = false,
   }) {
     return Category(
       id: id,
@@ -43,6 +50,9 @@ class Category {
           preferredBlockMaxMinutes ?? this.preferredBlockMaxMinutes,
       priority: priority ?? this.priority,
       enabled: enabled ?? this.enabled,
+      maximumMinutes: clearMaximum
+          ? null
+          : (maximumMinutes ?? this.maximumMinutes),
     );
   }
 
@@ -58,6 +68,7 @@ class Category {
       'preferredBlockMaxMinutes': preferredBlockMaxMinutes,
       'priority': priority,
       'enabled': enabled ? 1 : 0,
+      'maximumMinutes': maximumMinutes,
     };
   }
 
@@ -72,6 +83,7 @@ class Category {
       preferredBlockMaxMinutes: map['preferredBlockMaxMinutes'] as int,
       priority: map['priority'] as int,
       enabled: (map['enabled'] as int) == 1,
+      maximumMinutes: map['maximumMinutes'] as int?,
     );
   }
 }

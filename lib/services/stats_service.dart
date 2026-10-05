@@ -133,7 +133,27 @@ class StatsService {
     List<Block> blocks,
     List<Category> categories,
   ) {
-    final stats = categories.map((category) {
+    // Blocks of a deleted category still count: rebuild it from the blocks'
+    // own id/title so removing a category never erases history.
+    final known = {for (final c in categories) c.id};
+    final orphans = <String, Category>{};
+    for (final block in blocks) {
+      if (known.contains(block.categoryId)) continue;
+      orphans.putIfAbsent(
+        block.categoryId,
+        () => Category(
+          id: block.categoryId,
+          name: block.title,
+          icon: '🗂️',
+          percentage: 0,
+          minimumMinutes: 0,
+          preferredBlockMinMinutes: 1,
+          preferredBlockMaxMinutes: 60,
+          enabled: false,
+        ),
+      );
+    }
+    final stats = [...categories, ...orphans.values].map((category) {
       final categoryBlocks = blocks
           .where((b) => b.categoryId == category.id)
           .toList();
