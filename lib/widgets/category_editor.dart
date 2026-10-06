@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/category.dart';
 
 /// One expandable row per category: enable toggle plus sliders for
-/// percentage, minimum duration, and preferred block size. Shared by the
+/// share of the day, minimum/maximum per day and the fixed block size. Shared by the
 /// Settings tab and the Start Day screen so both edit categories the same way.
 class CategoryEditorTile extends StatelessWidget {
   final Category category;
@@ -25,9 +25,8 @@ class CategoryEditorTile extends StatelessWidget {
       leading: Text(category.icon, style: const TextStyle(fontSize: 22)),
       title: Text(category.name),
       subtitle: Text(
-        '${(category.percentage * 100).round()}% · min ${category.minimumMinutes}m · '
-        'block ${category.preferredBlockMinMinutes}-${category.preferredBlockMaxMinutes}m'
-        '${category.maximumMinutes == null ? '' : ' · max ${category.maximumMinutes}m'}',
+        '${(category.percentage * 100).round()}% · '
+        '${category.blockMinutes}m blocks',
       ),
       trailing: Switch(
         value: category.enabled,
@@ -35,7 +34,7 @@ class CategoryEditorTile extends StatelessWidget {
       ),
       children: [
         LabeledSlider(
-          label: 'Percentage',
+          label: 'Share of the day',
           value: category.percentage * 100,
           min: 0,
           max: 100,
@@ -45,7 +44,7 @@ class CategoryEditorTile extends StatelessWidget {
               onChanged(category.copyWith(percentage: value / 100)),
         ),
         LabeledSlider(
-          label: 'Minimum duration',
+          label: 'Minimum per day',
           value: category.minimumMinutes.toDouble(),
           min: 0,
           max: 180,
@@ -82,26 +81,14 @@ class CategoryEditorTile extends StatelessWidget {
           ),
         ),
         LabeledSlider(
-          label: 'Preferred block — min',
-          value: category.preferredBlockMinMinutes.toDouble(),
+          label: 'Block size',
+          value: category.blockMinutes.toDouble(),
           min: 15,
           max: 180,
           divisions: 33,
           formatValue: (v) => '${v.round()}m',
-          onChangeEnd: (value) => onChanged(
-            category.copyWith(preferredBlockMinMinutes: value.round()),
-          ),
-        ),
-        LabeledSlider(
-          label: 'Preferred block — max',
-          value: category.preferredBlockMaxMinutes.toDouble(),
-          min: 15,
-          max: 240,
-          divisions: 45,
-          formatValue: (v) => '${v.round()}m',
-          onChangeEnd: (value) => onChanged(
-            category.copyWith(preferredBlockMaxMinutes: value.round()),
-          ),
+          onChangeEnd: (value) =>
+              onChanged(category.copyWith(blockMinutes: value.round())),
         ),
         if (onDelete != null)
           Align(

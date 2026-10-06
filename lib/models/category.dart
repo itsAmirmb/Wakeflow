@@ -4,8 +4,11 @@ class Category {
   final String icon; // emoji for now, no icon package needed
   final double percentage; // 0.0–1.0
   final int minimumMinutes;
-  final int preferredBlockMinMinutes;
-  final int preferredBlockMaxMinutes;
+
+  /// Fixed block size. The day's time for this category is cut into blocks
+  /// of exactly this length; a leftover shorter than one block is added to
+  /// the last block.
+  final int blockMinutes;
   final int priority;
   final bool enabled;
 
@@ -19,8 +22,7 @@ class Category {
     required this.icon,
     required this.percentage,
     required this.minimumMinutes,
-    required this.preferredBlockMinMinutes,
-    required this.preferredBlockMaxMinutes,
+    required this.blockMinutes,
     this.priority = 0,
     this.enabled = true,
     this.maximumMinutes,
@@ -31,8 +33,7 @@ class Category {
     String? icon,
     double? percentage,
     int? minimumMinutes,
-    int? preferredBlockMinMinutes,
-    int? preferredBlockMaxMinutes,
+    int? blockMinutes,
     int? priority,
     bool? enabled,
     int? maximumMinutes,
@@ -44,10 +45,7 @@ class Category {
       icon: icon ?? this.icon,
       percentage: percentage ?? this.percentage,
       minimumMinutes: minimumMinutes ?? this.minimumMinutes,
-      preferredBlockMinMinutes:
-          preferredBlockMinMinutes ?? this.preferredBlockMinMinutes,
-      preferredBlockMaxMinutes:
-          preferredBlockMaxMinutes ?? this.preferredBlockMaxMinutes,
+      blockMinutes: blockMinutes ?? this.blockMinutes,
       priority: priority ?? this.priority,
       enabled: enabled ?? this.enabled,
       maximumMinutes: clearMaximum
@@ -64,8 +62,10 @@ class Category {
       'icon': icon,
       'percentage': percentage,
       'minimumMinutes': minimumMinutes,
-      'preferredBlockMinMinutes': preferredBlockMinMinutes,
-      'preferredBlockMaxMinutes': preferredBlockMaxMinutes,
+      // The table still has the old min/max columns (NOT NULL), so the one
+      // fixed size is stored in both; it is read back from the first.
+      'preferredBlockMinMinutes': blockMinutes,
+      'preferredBlockMaxMinutes': blockMinutes,
       'priority': priority,
       'enabled': enabled ? 1 : 0,
       'maximumMinutes': maximumMinutes,
@@ -79,8 +79,7 @@ class Category {
       icon: map['icon'] as String,
       percentage: map['percentage'] as double,
       minimumMinutes: map['minimumMinutes'] as int,
-      preferredBlockMinMinutes: map['preferredBlockMinMinutes'] as int,
-      preferredBlockMaxMinutes: map['preferredBlockMaxMinutes'] as int,
+      blockMinutes: map['preferredBlockMinMinutes'] as int,
       priority: map['priority'] as int,
       enabled: (map['enabled'] as int) == 1,
       maximumMinutes: map['maximumMinutes'] as int?,

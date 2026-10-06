@@ -212,18 +212,19 @@ class RoutineEngine {
     return result;
   }
 
-  /// Uses the fewest blocks permitted by the positive maximum, distributing
-  /// minutes evenly instead of leaving a tiny tail. If any split can satisfy
-  /// both preferred bounds, this split does. If not, the maximum is retained
-  /// and shorter blocks are unavoidable. Nonpositive maxima are treated as 1.
+  /// Cuts each category's minutes into blocks of its fixed size. A leftover
+  /// shorter than one block is added to the last block; time shorter than
+  /// one block becomes a single short block.
   static List<Block> splitIntoBlocks({
     required List<Category> categories,
     required Map<String, int> allocation,
   }) => _split(categories, allocation, const {});
 
+  /// Whole blocks of the category's fixed size; always at least one when
+  /// there is time, because a leftover joins the last block.
   static int _blockCount(Category category, int minutes) {
-    final maximum = math.max(1, category.preferredBlockMaxMinutes);
-    return (minutes + maximum - 1) ~/ maximum;
+    if (minutes <= 0) return 0;
+    return math.max(1, minutes ~/ math.max(1, category.blockMinutes));
   }
 
   static List<Block> _split(
@@ -242,10 +243,13 @@ class RoutineEngine {
       final minutes = allocation[category.id] ?? 0;
       if (minutes <= 0) continue;
       final count = _blockCount(category, minutes);
+      final size = math.max(1, category.blockMinutes);
       for (var i = 0; i < count; i++) {
         plan.add((
           category: category,
-          minutes: minutes ~/ count + (i < minutes % count ? 1 : 0),
+          // Every block is the fixed size; the last one also takes the
+          // leftover (always shorter than one block).
+          minutes: i == count - 1 ? minutes - size * (count - 1) : size,
         ));
       }
     }

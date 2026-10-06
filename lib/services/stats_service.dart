@@ -147,8 +147,7 @@ class StatsService {
           icon: '🗂️',
           percentage: 0,
           minimumMinutes: 0,
-          preferredBlockMinMinutes: 1,
-          preferredBlockMaxMinutes: 60,
+          blockMinutes: 60,
           enabled: false,
         ),
       );

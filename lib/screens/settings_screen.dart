@@ -362,26 +362,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       absorbing: _saving,
       child: ListView(
         children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
-            child: Text(
-              'General',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-          ),
+          if (_saving) const LinearProgressIndicator(),
+          const _SectionHeader('Appearance'),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-            child: Row(
-              children: [
-                const Icon(Icons.dark_mode_outlined),
-                const SizedBox(width: 12),
-                const Text('Theme'),
-                const Spacer(),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
             child: SegmentedButton<ThemeMode>(
               segments: const [
                 ButtonSegment(
@@ -404,131 +388,124 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onSelectionChanged: (selection) => _setThemeMode(selection.first),
             ),
           ),
+          const _SectionHeader('Day'),
           ListTile(
             leading: const Icon(Icons.notifications_active_outlined),
             title: const Text('Wake reminder'),
-            subtitle: Text(
-              TimeOfDay(
+            trailing: _ValueWithInfo(
+              value: TimeOfDay(
                 hour: _settings.wakeReminderHour,
                 minute: _settings.wakeReminderMinute,
               ).format(context),
+              infoTitle: 'Wake reminder',
+              info:
+                  'Scheduled for the next occurrence and renewed when you open '
+                  'the app or change the time. Reopen the app after changing '
+                  'time zones. Without exact-alarm access it may arrive late.',
             ),
             onTap: _pickWakeReminderTime,
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              'Next occurrence only, renewed when you open the app or '
-              'change the wake time. Daily reminders while the app stays closed '
-              'are not supported yet. Reopen after changing timezones. '
-              'Without exact-alarm access, delivery may be delayed.',
-            ),
-          ),
           ListTile(
-            leading: const Icon(Icons.fact_check_outlined),
-            title: const Text('Checkpoint reminders'),
-            subtitle: const Text('Fixed times of day'),
+            leading: const Icon(Icons.event_repeat),
+            title: const Text('New day starts at'),
+            trailing: _ValueWithInfo(
+              value: TimeOfDay(
+                hour: _settings.dayResetMinutes ~/ 60,
+                minute: _settings.dayResetMinutes % 60,
+              ).format(context),
+              infoTitle: 'New day starts at',
+              info:
+                  'Your routine resets at this time. If it is still '
+                  'unfinished, it carries over until you finish it or distill.',
+            ),
+            onTap: _pickDayReset,
+          ),
+          _SectionHeader(
+            'Fixed commitments',
             trailing: IconButton(
-              tooltip: 'Add checkpoint time',
-              onPressed: _addCheckpointTime,
+              tooltip: 'Add commitment',
+              onPressed: () => _editCommitment(null),
               icon: const Icon(Icons.add),
             ),
           ),
-          if (_settings.checkpointMinutesOfDay.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
-              child: Text('No checkpoint times selected.'),
-            ),
-          ..._settings.checkpointMinutesOfDay.map((minute) {
-            final time = TimeOfDay(hour: minute ~/ 60, minute: minute % 60);
-            return ListTile(
-              title: Text(time.format(context)),
-              trailing: IconButton(
-                tooltip: 'Remove checkpoint time',
-                key: ValueKey('remove-checkpoint-$minute'),
-                icon: const Icon(Icons.remove_circle_outline),
-                onPressed: () => _saveSettings(
-                  _settings.copyWith(
-                    checkpointMinutesOfDay: _settings.checkpointMinutesOfDay
-                        .where((value) => value != minute)
-                        .toList(),
-                  ),
-                ),
-              ),
-            );
-          }),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              'Schedule updates when you open Today. Reminders only occur '
-              'between wake time and the routine deadline and ask you to open '
-              'Today to review your progress. Delivery may be delayed without '
-              'exact-alarm access.',
-            ),
-          ),
-          if (_saving) const LinearProgressIndicator(),
-          ListTile(
-            leading: const Icon(Icons.space_bar),
-            title: const Text('Break between blocks'),
-            subtitle: Text(
-              _settings.bufferMinutes == 0
-                  ? 'No break timer'
-                  : '${_settings.bufferMinutes} minutes · a break timer runs after each finished block',
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Slider(
-              value: _settings.bufferMinutes.toDouble(),
-              min: 0,
-              max: 30,
-              divisions: 30,
-              label: '${_settings.bufferMinutes}m',
-              onChanged: (value) {
-                // Live-update the label while dragging; persist on release
-                // (onChangeEnd) so we're not hitting the DB every pixel.
-                setState(
-                  () => _settings = _settings.copyWith(
-                    bufferMinutes: value.round(),
+          Builder(
+            builder: (context) {
+              // Single-day events in the past are history, not settings.
+              final today = dayKey(DateTime.now());
+              final shown =
+                  _commitments
+                      .where((c) => c.isRecurring || c.date!.compareTo(today) >= 0)
+                      .toList()
+                    ..sort((a, b) => a.startMinutes.compareTo(b.startMinutes));
+              if (shown.isEmpty) {
+                return const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: Text(
+                    'None yet.',
                   ),
                 );
-              },
-              onChangeEnd: (value) => _saveSettings(
-                _settings.copyWith(bufferMinutes: value.round()),
+              }
+              return Column(
+                children: [
+                  for (final c in shown)
+                    ListTile(
+                      key: ValueKey('commitment-${c.id}'),
+                      leading: Icon(c.isRecurring ? Icons.repeat : Icons.event),
+                      title: Text(c.title),
+                      subtitle: Text(_commitmentSubtitle(c)),
+                      onTap: () => _editCommitment(c),
+                      trailing: Switch(
+                        value: c.enabled,
+                        onChanged: (value) => _toggleCommitment(c, value),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+          const _SectionHeader('Breaks'),
+          _SliderTile(
+            icon: Icons.space_bar,
+            title: 'Short break',
+            valueText: _settings.bufferMinutes == 0
+                ? 'Off'
+                : '${_settings.bufferMinutes} min',
+            info: 'Timer that runs after a finished block when more blocks of '
+                'the same category follow.',
+            value: _settings.bufferMinutes.toDouble(),
+            min: 0,
+            max: 30,
+            divisions: 30,
+            onChanged: (value) => setState(
+              () => _settings = _settings.copyWith(bufferMinutes: value.round()),
+            ),
+            onChangeEnd: (value) =>
+                _saveSettings(_settings.copyWith(bufferMinutes: value.round())),
+          ),
+          _SliderTile(
+            icon: Icons.weekend_outlined,
+            title: 'Long break',
+            valueText: _settings.longBreakMinutes == 0
+                ? 'Off'
+                : '${_settings.longBreakMinutes} min',
+            info: 'Timer that runs after the last block of a category.',
+            value: _settings.longBreakMinutes.toDouble().clamp(0, 90),
+            min: 0,
+            max: 90,
+            divisions: 18,
+            onChanged: (value) => setState(
+              () => _settings = _settings.copyWith(
+                longBreakMinutes: value.round(),
               ),
             ),
-          ),
-          ListTile(
-            leading: const Icon(Icons.weekend_outlined),
-            title: const Text('Long break (category finished)'),
-            subtitle: Text(
-              _settings.longBreakMinutes == 0
-                  ? 'No break after a finished category'
-                  : '${_settings.longBreakMinutes} minutes · after the last block of a category',
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Slider(
-              value: _settings.longBreakMinutes.toDouble().clamp(0, 90),
-              min: 0,
-              max: 90,
-              divisions: 18,
-              label: '${_settings.longBreakMinutes}m',
-              onChanged: (value) => setState(
-                () => _settings = _settings.copyWith(
-                  longBreakMinutes: value.round(),
-                ),
-              ),
-              onChangeEnd: (value) => _saveSettings(
-                _settings.copyWith(longBreakMinutes: value.round()),
-              ),
+            onChangeEnd: (value) => _saveSettings(
+              _settings.copyWith(longBreakMinutes: value.round()),
             ),
           ),
           ListTile(
             leading: const Icon(Icons.alarm),
-            title: const Text('Break-end alarm sound'),
-            subtitle: Text(_settings.breakAlarmTitle ?? 'Default (WakeFlow)'),
+            title: const Text('Break-end alarm'),
+            subtitle: Text(_settings.breakAlarmTitle ?? 'WakeFlow default'),
             trailing: _settings.breakAlarmUri == null
                 ? null
                 : IconButton(
@@ -550,18 +527,90 @@ class _SettingsScreenState extends State<SettingsScreen> {
               );
             },
           ),
-          ListTile(
-            leading: const Icon(Icons.restart_alt),
-            title: const Text('Distillation: keep progress'),
-            subtitle: Text(
-              _settings.distillKeepValue == 0
-                  ? 'Any unfinished block with progress is kept as a partial session'
-                  : 'Unfinished blocks with at least ${_settings.distillKeepMode == DistillKeepMode.minutes ? '${_settings.distillKeepValue} min' : '${_settings.distillKeepValue}% of the block'}'
-                      ' done are kept as partial sessions; the rest are discarded',
+          _SectionHeader(
+            'Checkpoints',
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const _InfoButton(
+                  title: 'Checkpoints',
+                  text:
+                      'At these times of day a reminder asks you to review your '
+                      'progress in Today. They only occur between wake time and '
+                      'the routine deadline, and stop once nothing is left to do.',
+                ),
+                IconButton(
+                  tooltip: 'Add checkpoint time',
+                  onPressed: _addCheckpointTime,
+                  icon: const Icon(Icons.add),
+                ),
+              ],
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: _settings.checkpointMinutesOfDay.isEmpty
+                ? Text(
+                    'No times set.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  )
+                : Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
+                      for (final minute in _settings.checkpointMinutesOfDay)
+                        InputChip(
+                          key: ValueKey('remove-checkpoint-$minute'),
+                          label: Text(
+                            TimeOfDay(
+                              hour: minute ~/ 60,
+                              minute: minute % 60,
+                            ).format(context),
+                          ),
+                          deleteButtonTooltipMessage: 'Remove checkpoint time',
+                          onDeleted: () => _saveSettings(
+                            _settings.copyWith(
+                              checkpointMinutesOfDay: _settings
+                                  .checkpointMinutesOfDay
+                                  .where((value) => value != minute)
+                                  .toList(),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+          ),
+          _SliderTile(
+            icon: Icons.science_outlined,
+            title: 'Distill keeps progress of',
+            valueText: _settings.distillKeepValue == 0
+                ? 'Any'
+                : _settings.distillKeepMode == DistillKeepMode.minutes
+                ? '${_settings.distillKeepValue} min'
+                : '${_settings.distillKeepValue}%',
+            info:
+                'When you distill, unfinished blocks with at least this much '
+                'timer progress are kept as partial sessions; the rest are '
+                'discarded.',
+            value: _settings.distillKeepValue.toDouble(),
+            min: 0,
+            max: _settings.distillKeepMode == DistillKeepMode.minutes
+                ? 60
+                : 100,
+            divisions: _settings.distillKeepMode == DistillKeepMode.minutes
+                ? 60
+                : 20,
+            onChanged: (value) => setState(
+              () => _settings = _settings.copyWith(
+                distillKeepValue: value.round(),
+              ),
+            ),
+            onChangeEnd: (value) => _saveSettings(
+              _settings.copyWith(distillKeepValue: value.round()),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: SegmentedButton<DistillKeepMode>(
               segments: const [
                 ButtonSegment(
@@ -584,110 +633,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Slider(
-              value: _settings.distillKeepValue.toDouble(),
-              min: 0,
-              max: _settings.distillKeepMode == DistillKeepMode.minutes
-                  ? 60
-                  : 100,
-              divisions: _settings.distillKeepMode == DistillKeepMode.minutes
-                  ? 60
-                  : 20,
-              label: _settings.distillKeepMode == DistillKeepMode.minutes
-                  ? '${_settings.distillKeepValue}m'
-                  : '${_settings.distillKeepValue}%',
-              onChanged: (value) => setState(
-                () => _settings = _settings.copyWith(
-                  distillKeepValue: value.round(),
-                ),
-              ),
-              onChangeEnd: (value) => _saveSettings(
-                _settings.copyWith(distillKeepValue: value.round()),
-              ),
-            ),
-          ),
-          const Divider(height: 32),
-          ListTile(
-            leading: const Icon(Icons.event_repeat),
-            title: const Text('New day starts at'),
-            subtitle: const Text(
-              'Your routine resets at this time. If it is still unfinished, '
-              'it carries over until you finish it or Distill.',
-            ),
-            trailing: Text(
-              TimeOfDay(
-                hour: _settings.dayResetMinutes ~/ 60,
-                minute: _settings.dayResetMinutes % 60,
-              ).format(context),
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            onTap: _pickDayReset,
-          ),
-          const Divider(height: 32),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
-            child: Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Fixed commitments',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Add commitment',
-                  onPressed: () => _editCommitment(null),
-                  icon: const Icon(Icons.add),
-                ),
-              ],
-            ),
-          ),
-          Builder(
-            builder: (context) {
-              // Single-day events in the past are history, not settings.
-              final today = dayKey(DateTime.now());
-              final shown =
-                  _commitments
-                      .where((c) => c.isRecurring || c.date!.compareTo(today) >= 0)
-                      .toList()
-                    ..sort((a, b) => a.startMinutes.compareTo(b.startMinutes));
-              if (shown.isEmpty) {
-                return const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
-                  child: Text(
-                    'None yet. Add classes, work or any fixed event: routines '
-                    'are planned around them.',
-                  ),
-                );
-              }
-              return Column(
-                children: [
-                  for (final c in shown)
-                    ListTile(
-                      key: ValueKey('commitment-${c.id}'),
-                      leading: Icon(c.isRecurring ? Icons.repeat : Icons.event),
-                      title: Text(c.title),
-                      subtitle: Text(_commitmentSubtitle(c)),
-                      onTap: () => _editCommitment(c),
-                      trailing: Switch(
-                        value: c.enabled,
-                        onChanged: (value) => _toggleCommitment(c, value),
-                      ),
-                    ),
-                ],
-              );
-            },
-          ),
-          const Divider(height: 32),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 0, 16, 4),
-            child: Text(
-              'Notifications',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-          ),
+          const _SectionHeader('Notifications'),
           for (final event in AlertEvent.values)
             _AlertTile(
               key: ValueKey('alert-${event.name}'),
@@ -697,23 +643,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _settings.copyWith(alerts: {..._settings.alerts, event: style}),
               ),
             ),
-          const Divider(height: 32),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
-            child: Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Categories',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Add category',
-                  onPressed: _addCategory,
-                  icon: const Icon(Icons.add),
-                ),
-              ],
+          _SectionHeader(
+            'Categories',
+            trailing: IconButton(
+              tooltip: 'Add category',
+              onPressed: _addCategory,
+              icon: const Icon(Icons.add),
             ),
           ),
           ...categories.map(
@@ -727,6 +662,148 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 24),
         ],
       ),
+    );
+  }
+}
+
+/// Section title with an optional trailing action (e.g. an add button).
+class _SectionHeader extends StatelessWidget {
+  final String title;
+  final Widget? trailing;
+
+  const _SectionHeader(this.title, {this.trailing});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 20, 8, 4),
+      child: SizedBox(
+        height: 40,
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: Theme.of(context).colorScheme.primary,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            if (trailing != null) trailing!,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Explanations live behind this button instead of cluttering the list.
+class _InfoButton extends StatelessWidget {
+  final String title;
+  final String text;
+
+  const _InfoButton({required this.title, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: 'About $title',
+      visualDensity: VisualDensity.compact,
+      icon: const Icon(Icons.info_outline, size: 20),
+      onPressed: () => showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(title),
+          content: Text(text),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ValueWithInfo extends StatelessWidget {
+  final String value;
+  final String infoTitle;
+  final String info;
+
+  const _ValueWithInfo({
+    required this.value,
+    required this.infoTitle,
+    required this.info,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(value, style: Theme.of(context).textTheme.titleMedium),
+        _InfoButton(title: infoTitle, text: info),
+      ],
+    );
+  }
+}
+
+/// Title and current value on one line, slider below; optional info button.
+class _SliderTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String valueText;
+  final String? info;
+  final double value;
+  final double min;
+  final double max;
+  final int divisions;
+  final ValueChanged<double> onChanged;
+  final ValueChanged<double> onChangeEnd;
+
+  const _SliderTile({
+    required this.icon,
+    required this.title,
+    required this.valueText,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.divisions,
+    required this.onChanged,
+    required this.onChangeEnd,
+    this.info,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        ListTile(
+          leading: Icon(icon),
+          title: Text(title),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(valueText, style: Theme.of(context).textTheme.titleMedium),
+              if (info != null) _InfoButton(title: title, text: info!),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Slider(
+            value: value.clamp(min, max),
+            min: min,
+            max: max,
+            divisions: divisions,
+            onChanged: onChanged,
+            onChangeEnd: onChangeEnd,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -780,8 +857,7 @@ class _NewCategoryDialogState extends State<_NewCategoryDialog> {
         icon: icon.isEmpty ? '📌' : icon.characters.first,
         percentage: 0.2,
         minimumMinutes: 0,
-        preferredBlockMinMinutes: 30,
-        preferredBlockMaxMinutes: 90,
+        blockMinutes: 45,
         priority: nextPriority,
       ),
     );
@@ -881,11 +957,7 @@ class _AlertTile extends StatelessWidget {
           onChanged: (value) => onChanged(style.copyWith(vibrate: value)),
         ),
         SwitchListTile(
-          title: const Text('Repeat until dismissed'),
-          subtitle: const Text(
-            'The sound loops for up to 3 minutes, or until you open or swipe '
-            'away the notification.',
-          ),
+          title: const Text('Repeat (up to 3 min)'),
           value: style.repeat && !silent,
           onChanged: silent
               ? null

@@ -7,8 +7,7 @@ final List<Category> defaultCategories = [
     icon: '📚',
     percentage: 0.40,
     minimumMinutes: 60,
-    preferredBlockMinMinutes: 60,
-    preferredBlockMaxMinutes: 90,
+    blockMinutes: 60,
     priority: 1,
   ),
   const Category(
@@ -17,8 +16,7 @@ final List<Category> defaultCategories = [
     icon: '📈',
     percentage: 0.25,
     minimumMinutes: 30,
-    preferredBlockMinMinutes: 45,
-    preferredBlockMaxMinutes: 90,
+    blockMinutes: 45,
     priority: 2,
   ),
   const Category(
@@ -27,8 +25,7 @@ final List<Category> defaultCategories = [
     icon: '🏋️',
     percentage: 0.35,
     minimumMinutes: 60,
-    preferredBlockMinMinutes: 30,
-    preferredBlockMaxMinutes: 120,
+    blockMinutes: 30,
     priority: 3,
   ),
 ];
