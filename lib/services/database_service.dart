@@ -10,6 +10,8 @@ import '../models/category.dart';
 import '../models/commitment.dart';
 import '../models/day_mode.dart';
 import '../models/app_settings.dart';
+import '../models/reward.dart';
+import 'credit_service.dart';
 import '../data/default_categories.dart';
 
 /// Thin wrapper around a single sqflite database.
@@ -40,7 +42,7 @@ class DatabaseService {
 
     return openDatabase(
       path,
-      version: 14,
+      version: 15,
       onCreate: createSchema,
       onUpgrade: upgradeSchema,
     );
@@ -110,6 +112,7 @@ class DatabaseService {
     await _createSettingsTable(db);
     await _createCheckpointsTable(db);
     await _createCommitmentsTable(db);
+    await _createCreditLedgerTable(db);
 
     // Seed categories on first run so the app always has something
     // to allocate time against.
@@ -190,6 +193,10 @@ class DatabaseService {
         'INTEGER NOT NULL DEFAULT 5',
       );
     }
+    // v14 -> v15: credit ledger (earned from timer time, spent on rewards).
+    if (oldVersion < 15) {
+      await _createCreditLedgerTable(db);
+    }
     // v13 -> v14: long break after a finished category.
     if (oldVersion < 14) {
       await ensureColumn(
@@ -220,6 +227,25 @@ class DatabaseService {
         'INTEGER NOT NULL DEFAULT 240',
       );
     }
+  }
+
+  /// Append-only ledger. Earn rows are one per block (unique blockId) and only
+  /// ever grow, so re-saving a block can never double-count; spend rows are
+  /// negative. Kept apart from `blocks` so credits survive distilling.
+  static Future<void> _createCreditLedgerTable(DatabaseExecutor db) async {
+    await db.execute('''CREATE TABLE IF NOT EXISTS credit_ledger (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL,
+      blockId TEXT,
+      creditSeconds INTEGER NOT NULL,
+      rewardId TEXT,
+      rewardTitle TEXT,
+      createdAt TEXT NOT NULL
+    )''');
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_credit_block '
+      'ON credit_ledger(blockId) WHERE blockId IS NOT NULL',
+    );
   }
 
   static Future<void> _createCommitmentsTable(DatabaseExecutor db) async {
@@ -261,6 +287,7 @@ class DatabaseService {
         'note': note, 'recalculated': proposed == null ? 0 : 1,
       });
       if (proposed != null) {
+        await _accrueDay(txn, day);
         await txn.delete('blocks', where: 'day = ?', whereArgs: [day]);
         for (final block in proposed) {
           await txn.insert('blocks', block.toMap(day: day));
@@ -398,6 +425,7 @@ class DatabaseService {
   Future<void> saveBlocksForDay(String day, List<Block> blocks) async {
     final db = await database;
     await db.transaction((txn) async {
+      await _accrueDay(txn, day);
       await txn.delete('blocks', where: 'day = ?', whereArgs: [day]);
       final batch = txn.batch();
       for (final block in blocks) {
@@ -411,12 +439,18 @@ class DatabaseService {
   /// COMPLETE/SKIP, so we don't touch the other blocks in the day).
   Future<void> updateBlock(String day, Block block) async {
     final db = await database;
-    await db.update(
-      'blocks',
-      block.toMap(day: day),
-      where: 'id = ?',
-      whereArgs: [block.id],
-    );
+    await db.transaction((txn) async {
+      await txn.update(
+        'blocks',
+        block.toMap(day: day),
+        where: 'id = ?',
+        whereArgs: [block.id],
+      );
+      // A running timer is credited when it stops (pause/complete/skip).
+      if (block.status != BlockStatus.active) {
+        await _accrueCredit(txn, [block], DateTime.now());
+      }
+    });
   }
 
   Future<List<Block>> getBlocksForDay(String day) async {
@@ -428,6 +462,91 @@ class DatabaseService {
       orderBy: 'plannedStart ASC',
     );
     return rows.map(Block.fromMap).toList();
+  }
+
+  // ---------- Credits ----------
+
+  /// Credits the real timer time of [blocks] (idempotent: a block's earn row
+  /// only ever grows to the largest value seen).
+  static Future<void> _accrueCredit(
+    DatabaseExecutor txn,
+    Iterable<Block> blocks,
+    DateTime now,
+  ) async {
+    for (final block in blocks) {
+      final timerSeconds = block.recordedSeconds > block.elapsedAt(now).inSeconds
+          ? block.recordedSeconds
+          : block.elapsedAt(now).inSeconds;
+      final earned = Credits.earnedSeconds(timerSeconds);
+      if (earned <= 0) continue;
+      final rows = await txn.query(
+        'credit_ledger',
+        columns: ['id', 'creditSeconds'],
+        where: 'blockId = ?',
+        whereArgs: [block.id],
+        limit: 1,
+      );
+      if (rows.isEmpty) {
+        await txn.insert('credit_ledger', {
+          'kind': 'earn',
+          'blockId': block.id,
+          'creditSeconds': earned,
+          'createdAt': now.toIso8601String(),
+        });
+      } else if (earned > (rows.first['creditSeconds'] as int)) {
+        await txn.update(
+          'credit_ledger',
+          {'creditSeconds': earned},
+          where: 'id = ?',
+          whereArgs: [rows.first['id']],
+        );
+      }
+    }
+  }
+
+  /// Rows of a day are about to be replaced or dropped (distill, new plan):
+  /// bank their timer time first so discarded progress still earns credit.
+  static Future<void> _accrueDay(DatabaseExecutor txn, String day) async {
+    final rows = await txn.query('blocks', where: 'day = ?', whereArgs: [day]);
+    await _accrueCredit(txn, rows.map(Block.fromMap), DateTime.now());
+  }
+
+  static Future<int> _balance(DatabaseExecutor db) async {
+    final rows = await db.rawQuery(
+      'SELECT COALESCE(SUM(creditSeconds), 0) AS total FROM credit_ledger',
+    );
+    return (rows.first['total'] as int?) ?? 0;
+  }
+
+  /// Current balance in credit seconds (see [Credits]).
+  Future<int> getCreditBalance() async => _balance(await database);
+
+  /// Spends [reward]'s cost. The balance check and the spend row share one
+  /// transaction, so a double tap can never overspend.
+  Future<void> redeemReward(Reward reward) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      final cost = Credits.costSeconds(reward.costCredits);
+      final balance = await _balance(txn);
+      if (balance < cost) throw InsufficientCreditsException(balance, cost);
+      await txn.insert('credit_ledger', {
+        'kind': 'spend',
+        'creditSeconds': -cost,
+        'rewardId': reward.id,
+        'rewardTitle': reward.title,
+        'createdAt': DateTime.now().toIso8601String(),
+      });
+    });
+  }
+
+  Future<List<Map<String, Object?>>> getRedemptions({int limit = 50}) async {
+    final db = await database;
+    return db.query(
+      'credit_ledger',
+      where: "kind = 'spend'",
+      orderBy: 'createdAt DESC',
+      limit: limit,
+    );
   }
 
   // ---------- Day meta (dayMode + wakeTime per day) ----------
@@ -480,6 +599,7 @@ class DatabaseService {
         'wakeTime': wakeTime.toIso8601String(),
         'dayEnd': dayEnd?.toIso8601String(),
       }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await _accrueDay(txn, day);
       await txn.delete('blocks', where: 'day = ?', whereArgs: [day]);
       final batch = txn.batch();
       for (final block in blocks) {

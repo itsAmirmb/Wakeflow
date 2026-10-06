@@ -6,6 +6,7 @@ import 'wake_screen.dart';
 import 'today_screen.dart';
 import 'settings_screen.dart';
 import 'stats_screen.dart';
+import 'rewards_screen.dart';
 import '../models/day_mode.dart';
 import '../models/block.dart';
 import '../models/category.dart';
@@ -325,6 +326,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         title = 'Stats';
         break;
       case 2:
+        body = const RewardsScreen();
+        title = 'Rewards';
+        break;
+      case 3:
         body = const SettingsScreen();
         title = 'Settings';
         break;
@@ -352,6 +357,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             icon: Icon(Icons.bar_chart_outlined),
             selectedIcon: Icon(Icons.bar_chart),
             label: 'Stats',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.card_giftcard_outlined),
+            selectedIcon: Icon(Icons.card_giftcard),
+            label: 'Rewards',
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined),
