@@ -297,6 +297,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               )
               .toList(),
         );
+        // Everything left is finished: no checkpoint reminders needed.
+        await NotificationService.instance.cancelCheckpointReminders(day: day);
       } catch (_) {
         _snack('Distilled, but block reminders could not be updated.');
       }

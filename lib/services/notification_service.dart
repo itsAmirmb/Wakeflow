@@ -137,12 +137,23 @@ class NotificationService {
     }
   }
 
+  /// Small stable hash (FNV-1a) so a chosen sound URI maps to a stable channel.
+  static String _hash(String value) {
+    var hash = 0x811c9dc5;
+    for (final unit in value.codeUnits) {
+      hash ^= unit;
+      hash = (hash * 0x01000193) & 0xffffffff;
+    }
+    return hash.toRadixString(16);
+  }
+
   /// Android fixes sound/importance per channel at creation, so every
   /// event + sound + vibration combination gets its own deterministic channel.
   AndroidNotificationDetails _androidDetails(
     AlertEvent? event,
     AlertStyle? style, [
     String? soundRes,
+    String? soundUri,
   ]) {
     if (event == null || style == null) {
       return const AndroidNotificationDetails(
@@ -157,7 +168,7 @@ class NotificationService {
     final silent = style.sound == AlertSound.silent;
     final loop = style.repeat && !silent;
     return AndroidNotificationDetails(
-      'wf4_${event.name}_${soundRes ?? style.sound.name}_${style.vibrate ? 'vib' : 'novib'}',
+      'wf4_${event.name}_${soundUri != null ? 'u${_hash(soundUri)}' : (soundRes ?? style.sound.name)}_${style.vibrate ? 'vib' : 'novib'}',
       'WakeFlow: ${event.label}',
       channelDescription: 'Alerts for: ${event.label}',
       importance: silent
@@ -171,6 +182,8 @@ class NotificationService {
       // media entry, which makes the notification silent.
       sound: silent
           ? null
+          : soundUri != null
+          ? UriAndroidNotificationSound(soundUri)
           : RawResourceAndroidNotificationSound(
               soundRes ?? (alarm ? 'wf_alarm' : 'wf_chime'),
             ),
@@ -196,6 +209,7 @@ class NotificationService {
     String? payload,
     AlertEvent? event,
     String? soundRes,
+    String? soundUri,
   }) async {
     if (!when.isAfter(_now())) return;
     AlertStyle? style;
@@ -218,7 +232,7 @@ class NotificationService {
       title,
       body,
       tz.TZDateTime.from(when, tz.UTC),
-      NotificationDetails(android: _androidDetails(event, style, soundRes)),
+      NotificationDetails(android: _androidDetails(event, style, soundRes, soundUri)),
       androidScheduleMode: mode,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
@@ -242,8 +256,6 @@ class NotificationService {
   /// active timer, never a pending block's original planned end.
   Future<void> scheduleForBlocks(List<Block> blocks) => _serial(() async {
     await init();
-    // The very first task of the day gets its own sound.
-    final nothingStarted = !blocks.any((b) => b.actualStart != null);
     for (final block in blocks) {
       if (block.status != BlockStatus.pending ||
           block.plannedStart == null ||
@@ -257,9 +269,8 @@ class NotificationService {
         when: block.plannedStart!,
         payload: _payload(block.id, false),
         event: AlertEvent.blockStart,
-        soundRes: nothingStarted && block.id == blocks.first.id
-            ? 'session_start'
-            : 'task_start',
+        // Deliberately not the in-app Start sound (task_start/session_start).
+        soundRes: 'wf_chime',
       );
     }
   });
@@ -466,7 +477,7 @@ class NotificationService {
   Future<void> scheduleBreakEnd({
     required DateTime when,
     required String nextTitle,
-    bool long = false,
+    String? soundUri,
   }) => _serial(() async {
     await init();
     await _plugin.cancel(_breakAlarmId);
@@ -477,7 +488,8 @@ class NotificationService {
       when: when,
       payload: jsonEncode(['wakeflow-break-v1']),
       event: AlertEvent.breakEnd,
-      soundRes: long ? 'long_break' : 'short_break',
+      soundRes: 'confirm_screen',
+      soundUri: soundUri,
     );
   });
 

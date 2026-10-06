@@ -13,6 +13,10 @@ class AppSettings {
 
   /// Break after the LAST block of a category (the category is finished).
   final int longBreakMinutes;
+
+  /// Phone alarm chosen for the end of a break (null = bundled default).
+  final String? breakAlarmUri;
+  final String? breakAlarmTitle;
   final int wakeReminderHour;
   final int wakeReminderMinute;
   final String themeMode; // 'system' | 'light' | 'dark'
@@ -33,6 +37,8 @@ class AppSettings {
   const AppSettings({
     this.bufferMinutes = 10,
     this.longBreakMinutes = 30,
+    this.breakAlarmUri,
+    this.breakAlarmTitle,
     this.wakeReminderHour = 8,
     this.wakeReminderMinute = 0,
     this.themeMode = 'system',
@@ -49,6 +55,9 @@ class AppSettings {
   AppSettings copyWith({
     int? bufferMinutes,
     int? longBreakMinutes,
+    String? breakAlarmUri,
+    String? breakAlarmTitle,
+    bool clearBreakAlarm = false,
     int? wakeReminderHour,
     int? wakeReminderMinute,
     String? themeMode,
@@ -61,6 +70,12 @@ class AppSettings {
     return AppSettings(
       bufferMinutes: bufferMinutes ?? this.bufferMinutes,
       longBreakMinutes: longBreakMinutes ?? this.longBreakMinutes,
+      breakAlarmUri: clearBreakAlarm
+          ? null
+          : (breakAlarmUri ?? this.breakAlarmUri),
+      breakAlarmTitle: clearBreakAlarm
+          ? null
+          : (breakAlarmTitle ?? this.breakAlarmTitle),
       wakeReminderHour: wakeReminderHour ?? this.wakeReminderHour,
       wakeReminderMinute: wakeReminderMinute ?? this.wakeReminderMinute,
       themeMode: themeMode ?? this.themeMode,
@@ -112,6 +127,8 @@ class AppSettings {
       'id': 0, // single row
       'bufferMinutes': bufferMinutes,
       'longBreakMinutes': longBreakMinutes,
+      'breakAlarmUri': breakAlarmUri,
+      'breakAlarmTitle': breakAlarmTitle,
       'wakeReminderHour': wakeReminderHour,
       'wakeReminderMinute': wakeReminderMinute,
       'themeMode': themeMode,
@@ -131,6 +148,8 @@ class AppSettings {
     return AppSettings(
       bufferMinutes: map['bufferMinutes'] as int,
       longBreakMinutes: ((map['longBreakMinutes'] as int?) ?? 30).clamp(0, 180),
+      breakAlarmUri: map['breakAlarmUri'] as String?,
+      breakAlarmTitle: map['breakAlarmTitle'] as String?,
       wakeReminderHour: map['wakeReminderHour'] as int,
       wakeReminderMinute: map['wakeReminderMinute'] as int,
       // Older rows (pre-theme-setting) won't have this column — default

@@ -42,7 +42,7 @@ class DatabaseService {
 
     return openDatabase(
       path,
-      version: 15,
+      version: 16,
       onCreate: createSchema,
       onUpgrade: upgradeSchema,
     );
@@ -193,6 +193,11 @@ class DatabaseService {
         'INTEGER NOT NULL DEFAULT 5',
       );
     }
+    // v15 -> v16: user-chosen break-end alarm.
+    if (oldVersion < 16) {
+      await ensureColumn(db, 'settings', 'breakAlarmUri', 'TEXT');
+      await ensureColumn(db, 'settings', 'breakAlarmTitle', 'TEXT');
+    }
     // v14 -> v15: credit ledger (earned from timer time, spent on rewards).
     if (oldVersion < 15) {
       await _createCreditLedgerTable(db);
@@ -331,6 +336,8 @@ class DatabaseService {
         id INTEGER PRIMARY KEY,
         bufferMinutes INTEGER NOT NULL,
         longBreakMinutes INTEGER NOT NULL DEFAULT 30,
+        breakAlarmUri TEXT,
+        breakAlarmTitle TEXT,
         wakeReminderHour INTEGER NOT NULL,
         wakeReminderMinute INTEGER NOT NULL,
         themeMode TEXT NOT NULL DEFAULT 'system',

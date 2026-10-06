@@ -101,7 +101,9 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
       } else {
         await NotificationService.instance.scheduleCheckpointReminders(
           day: widget.day, wakeTime: meta.$2, dayEnd: end,
-          minutesOfDay: settings.checkpointMinutesOfDay,
+          // Nothing left to review once every block is finished or distilled.
+          minutesOfDay:
+              _hasUnfinished ? settings.checkpointMinutesOfDay : const [],
         );
       }
     } catch (_) {
@@ -238,7 +240,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
         await NotificationService.instance.scheduleBreakEnd(
           when: state.end,
           nextTitle: state.next.title,
-          long: state.isLong,
+          soundUri: _settings.breakAlarmUri,
         );
       }
     } catch (_) {
@@ -257,6 +259,20 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     } catch (_) {
       // Nothing useful to tell the user: the alarm times out by itself.
     }
+  }
+
+  /// Checkpoint reminders are pointless once nothing is left to run; without
+  /// this they would still fire later in the day.
+  void _cancelCheckpointReminders() {
+    if (widget.syncNotifications != null ||
+        widget.syncCheckpointReminders != null) {
+      return;
+    }
+    unawaited(
+      NotificationService.instance
+          .cancelCheckpointReminders(day: widget.day)
+          .catchError((_) {}),
+    );
   }
 
   DateTime _deadline(DateTime? saved) {
@@ -379,10 +395,14 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
       if (breakState != null && breakState.isOver(_now) &&
           !_alarmSilenced && !_breakRang) {
         _breakRang = true;
+        // The in-app alarm replaces the scheduled notification, so the two
+        // never ring on top of each other.
+        unawaited(_cancelBreakAlarm());
         unawaited(
           AlarmSound.play(
-            breakState.isLong ? 'long_break' : 'short_break',
+            'confirm_screen',
             loop: true,
+            uri: _settings.breakAlarmUri,
           ),
         );
       }
@@ -485,8 +505,11 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     if (state != null) {
       _startTicking();
       unawaited(_scheduleBreakAlarm(state));
+      // Break starts: short or long break sound (the end alarm is separate).
+      unawaited(AlarmSound.play(state.isLong ? 'long_break' : 'short_break'));
     } else if (!_hasUnfinished) {
       unawaited(AlarmSound.play('session_complete'));
+      _cancelCheckpointReminders();
     }
   }
 
@@ -505,6 +528,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
       _blocks[index] = updated;
     });
     _persist(updated);
+    if (!_hasUnfinished) _cancelCheckpointReminders();
   }
 
   Future<void> _runCheckpoint({bool forced = false}) async {
@@ -512,7 +536,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     setState(() => _reviewing = true);
     // A forced checkpoint stops the timer (below) and rings until the user
     // acts on the review screen.
-    if (forced) unawaited(AlarmSound.play('teq_teq', loop: true));
+    if (forced) unawaited(AlarmSound.play('teq_teq'));
     try {
       // A forced review freezes a running block first, so what is previewed
       // is exactly what gets saved.
@@ -596,6 +620,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
                 _reviewCount = (_reviewCount ?? 0) + 1;
                 _blocks = List<Block>.of(result.blocks);
               });
+              if (!_hasUnfinished) _cancelCheckpointReminders();
             }
             try {
               await NotificationService.instance.cancelForBlocks(

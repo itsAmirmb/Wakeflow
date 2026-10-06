@@ -4,6 +4,7 @@ import '../models/alert_style.dart';
 import '../models/category.dart';
 import '../models/commitment.dart';
 import '../models/app_settings.dart';
+import '../services/alarm_sound.dart';
 import '../services/database_service.dart';
 import '../services/notification_service.dart';
 import '../services/theme_controller.dart';
@@ -523,6 +524,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _settings.copyWith(longBreakMinutes: value.round()),
               ),
             ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.alarm),
+            title: const Text('Break-end alarm sound'),
+            subtitle: Text(_settings.breakAlarmTitle ?? 'Default (WakeFlow)'),
+            trailing: _settings.breakAlarmUri == null
+                ? null
+                : IconButton(
+                    tooltip: 'Use default',
+                    icon: const Icon(Icons.restart_alt),
+                    onPressed: () =>
+                        _saveSettings(_settings.copyWith(clearBreakAlarm: true)),
+                  ),
+            onTap: () async {
+              final picked = await AlarmSound.pickAlarm(
+                current: _settings.breakAlarmUri,
+              );
+              if (picked == null || !mounted) return;
+              await _saveSettings(
+                _settings.copyWith(
+                  breakAlarmUri: picked.uri,
+                  breakAlarmTitle: picked.title,
+                ),
+              );
+            },
           ),
           ListTile(
             leading: const Icon(Icons.restart_alt),
