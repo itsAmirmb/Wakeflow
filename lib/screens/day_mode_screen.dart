@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import '../models/block.dart';
 import '../models/day_mode.dart';
 import '../models/category.dart';
+import '../models/commitment.dart';
 import '../models/routine_target.dart';
 import '../widgets/category_editor.dart';
+import '../widgets/commitment_editor.dart';
 import '../services/routine_engine.dart';
 import '../services/database_service.dart';
 import '../services/active_day.dart';
@@ -33,6 +35,9 @@ class _DayModeScreenState extends State<DayModeScreen> {
   // generated (not while editing), so backing out discards them.
   List<Category>? _categories;
   int _bufferMinutes = 10;
+  // Fixed events of the day being planned; blocks are scheduled around them.
+  List<Commitment> _commitments = const [];
+  String? _planDay;
 
   @override
   void initState() {
@@ -43,11 +48,43 @@ class _DayModeScreenState extends State<DayModeScreen> {
   Future<void> _loadData() async {
     final categories = await DatabaseService.instance.getCategories();
     final settings = await DatabaseService.instance.getSettings();
+    var planDay = dayKey(widget.wakeTime);
+    var commitments = <Commitment>[];
+    try {
+      planDay = await ActiveDay.resolve(DatabaseService.instance, widget.wakeTime);
+      commitments = await DatabaseService.instance.getCommitmentsForDay(planDay);
+    } catch (_) {
+      // Planning still works without them.
+    }
     if (!mounted) return;
     setState(() {
       _categories = List<Category>.of(categories);
       _bufferMinutes = settings.bufferMinutes;
+      _planDay = planDay;
+      _commitments = commitments;
     });
+  }
+
+  Future<void> _addCommitment() async {
+    final day = _planDay;
+    if (day == null) return;
+    final result = await showCommitmentEditor(
+      context,
+      presetDate: DateTime.parse(day),
+    );
+    final saved = result?.saved;
+    if (saved == null || !mounted) return;
+    try {
+      await DatabaseService.instance.saveCommitment(saved);
+      final commitments = await DatabaseService.instance.getCommitmentsForDay(day);
+      if (mounted) setState(() => _commitments = commitments);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not save the commitment.')),
+        );
+      }
+    }
   }
 
   void _updateCategory(int index, Category category) {
@@ -117,12 +154,23 @@ class _DayModeScreenState extends State<DayModeScreen> {
       kept = [];
     }
 
+    // Fixed events of this day (re-read: one may have just been added).
+    var busy = <BusyInterval>[];
+    try {
+      final date = DateTime.parse(today);
+      busy = [
+        for (final c in await DatabaseService.instance.getCommitmentsForDay(today))
+          c.intervalOn(date),
+      ];
+    } catch (_) {}
+
     final placedBlocks = kept.isEmpty
         ? RoutineEngine.generateRoutine(
             categories: categories,
             startTime: wakeTime,
             dayEnd: dayEnd,
             bufferMinutes: _bufferMinutes,
+            busy: busy,
           )
         : RoutineEngine.recalculateFromCheckpoint(
             currentBlocks: kept,
@@ -130,6 +178,7 @@ class _DayModeScreenState extends State<DayModeScreen> {
             now: wakeTime,
             dayEnd: dayEnd,
             bufferMinutes: _bufferMinutes,
+            busy: busy,
           );
 
     // Metadata and blocks are written atomically so a crash can never
@@ -211,6 +260,25 @@ class _DayModeScreenState extends State<DayModeScreen> {
                         ),
                       ),
                     ],
+                  ),
+                ),
+                const Divider(),
+                ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.event_busy_outlined),
+                  title: const Text('Commitments today'),
+                  subtitle: Text(
+                    _commitments.isEmpty
+                        ? 'None. Blocks are planned around fixed events.'
+                        : [
+                            for (final c in _commitments)
+                              '${c.title} ${Commitment.hm(c.startMinutes)}–${Commitment.hm(c.endMinutes)}',
+                          ].join('\n'),
+                  ),
+                  trailing: IconButton(
+                    tooltip: 'Add a commitment for today',
+                    icon: const Icon(Icons.add),
+                    onPressed: _addCommitment,
                   ),
                 ),
                 const Divider(),

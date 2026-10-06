@@ -346,7 +346,10 @@ class NotificationService {
 
   static const _checkpointPayloadTag = 'wakeflow-checkpoint-v1';
 
-  Future<void> _cancelCheckpoints(String day) async {
+  Future<void> _cancelCheckpoints(String day) =>
+      _cancelTagged(_checkpointPayloadTag, day);
+
+  Future<void> _cancelTagged(String tag, String day) async {
     for (final request in await _plugin.pendingNotificationRequests()) {
       final payload = request.payload;
       if (payload == null) continue;
@@ -358,7 +361,7 @@ class NotificationService {
       }
       if (decoded is List &&
           decoded.length == 3 &&
-          decoded[0] == _checkpointPayloadTag &&
+          decoded[0] == tag &&
           decoded[1] == day) {
         await _plugin.cancel(request.id);
       }
@@ -400,6 +403,39 @@ class NotificationService {
         when: when,
         payload: payload,
         event: AlertEvent.checkpoint,
+      );
+    }
+  });
+
+  static const _commitmentPayloadTag = 'wakeflow-commitment-v1';
+  static const _commitmentLeadMinutes = 10;
+
+  /// Reminds shortly before each fixed commitment of this routine day starts.
+  /// Replaces only this day's commitment reminders.
+  Future<void> scheduleCommitmentReminders({
+    required String day,
+    required List<({String title, DateTime start})> items,
+  }) => _serial(() async {
+    await init();
+    await _cancelTagged(_commitmentPayloadTag, day);
+    for (final item in items) {
+      final payload = jsonEncode([
+        _commitmentPayloadTag,
+        day,
+        item.start.toIso8601String(),
+      ]);
+      final hh = item.start.hour.toString().padLeft(2, '0');
+      final mm = item.start.minute.toString().padLeft(2, '0');
+      await _schedule(
+        id: await _allocateId(
+          payload,
+          blockNotificationId(payload, end: false),
+        ),
+        title: 'Coming up: ${item.title}',
+        body: 'Starts at $hh:$mm',
+        when: item.start.subtract(const Duration(minutes: _commitmentLeadMinutes)),
+        payload: payload,
+        event: AlertEvent.commitment,
       );
     }
   });

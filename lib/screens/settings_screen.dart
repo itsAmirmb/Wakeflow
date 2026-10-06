@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../models/alert_style.dart';
 import '../models/category.dart';
+import '../models/commitment.dart';
 import '../models/app_settings.dart';
 import '../services/database_service.dart';
 import '../services/notification_service.dart';
 import '../services/theme_controller.dart';
 import '../widgets/category_editor.dart';
+import '../widgets/commitment_editor.dart';
+import '../services/day_key.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
@@ -38,6 +41,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   List<Category>? _categories;
+  List<Commitment> _commitments = const [];
   AppSettings _settings = const AppSettings();
   AppSettings _persistedSettings = const AppSettings();
   bool _saving = false;
@@ -57,9 +61,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
               DatabaseService.instance.getCategories)();
       final settings =
           await (widget.loadSettings ?? DatabaseService.instance.getSettings)();
+      // Commitments are optional extras: a failure here must not block the
+      // rest of Settings.
+      var commitments = <Commitment>[];
+      try {
+        commitments = await DatabaseService.instance.getCommitments();
+      } catch (_) {}
       if (!mounted) return;
       setState(() {
         _categories = categories;
+        _commitments = commitments;
         _settings = _persistedSettings = settings;
       });
     } catch (_) {
@@ -146,6 +157,72 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  Future<void> _editCommitment(Commitment? existing) async {
+    if (_saving) return;
+    final result = await showCommitmentEditor(context, existing: existing);
+    if (result == null || !mounted) return;
+    setState(() => _saving = true);
+    try {
+      final db = DatabaseService.instance;
+      if (result.deleted && existing != null) {
+        await db.deleteCommitment(existing.id);
+        if (!mounted) return;
+        setState(
+          () => _commitments = _commitments
+              .where((c) => c.id != existing.id)
+              .toList(),
+        );
+      } else if (result.saved != null) {
+        final saved = result.saved!;
+        await db.saveCommitment(saved);
+        if (!mounted) return;
+        setState(
+          () => _commitments = [
+            ..._commitments.where((c) => c.id != saved.id),
+            saved,
+          ],
+        );
+      }
+    } catch (_) {
+      _showError('Could not save the commitment. Please try again.');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _toggleCommitment(Commitment commitment, bool enabled) async {
+    if (_saving) return;
+    final updated = commitment.copyWith(enabled: enabled);
+    setState(() => _saving = true);
+    try {
+      await DatabaseService.instance.saveCommitment(updated);
+      if (!mounted) return;
+      setState(
+        () => _commitments = [
+          for (final c in _commitments) c.id == updated.id ? updated : c,
+        ],
+      );
+    } catch (_) {
+      _showError('Could not update the commitment. Please try again.');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  String _commitmentSubtitle(Commitment c) {
+    final times =
+        '${Commitment.hm(c.startMinutes)}–${Commitment.hm(c.endMinutes)}';
+    if (!c.isRecurring) return '${c.date} · $times';
+    // Same week order as the editor: it follows the locale.
+    final first = MaterialLocalizations.of(context).firstDayOfWeekIndex;
+    final days = [
+      for (var i = 0; i < 7; i++)
+        if (c.weekdays.contains((first + i) % 7 == 0 ? 7 : (first + i) % 7))
+          Commitment.weekdayNames[(first + i) % 7 == 0 ? 7 : (first + i) % 7]!,
+    ];
+    return '${days.join(', ')} · $times';
   }
 
   Future<void> _addCategory() async {
@@ -494,6 +571,61 @@ class _SettingsScreenState extends State<SettingsScreen> {
               style: Theme.of(context).textTheme.titleMedium,
             ),
             onTap: _pickDayReset,
+          ),
+          const Divider(height: 32),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Fixed commitments',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Add commitment',
+                  onPressed: () => _editCommitment(null),
+                  icon: const Icon(Icons.add),
+                ),
+              ],
+            ),
+          ),
+          Builder(
+            builder: (context) {
+              // Single-day events in the past are history, not settings.
+              final today = dayKey(DateTime.now());
+              final shown =
+                  _commitments
+                      .where((c) => c.isRecurring || c.date!.compareTo(today) >= 0)
+                      .toList()
+                    ..sort((a, b) => a.startMinutes.compareTo(b.startMinutes));
+              if (shown.isEmpty) {
+                return const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: Text(
+                    'None yet. Add classes, work or any fixed event: routines '
+                    'are planned around them.',
+                  ),
+                );
+              }
+              return Column(
+                children: [
+                  for (final c in shown)
+                    ListTile(
+                      key: ValueKey('commitment-${c.id}'),
+                      leading: Icon(c.isRecurring ? Icons.repeat : Icons.event),
+                      title: Text(c.title),
+                      subtitle: Text(_commitmentSubtitle(c)),
+                      onTap: () => _editCommitment(c),
+                      trailing: Switch(
+                        value: c.enabled,
+                        onChanged: (value) => _toggleCommitment(c, value),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
           const Divider(height: 32),
           const Padding(

@@ -11,6 +11,7 @@ import 'checkpoint_screen.dart';
 import 'checkpoint_history_screen.dart';
 import '../models/block.dart';
 import '../models/category.dart';
+import '../models/commitment.dart';
 import '../services/break_state.dart';
 import '../services/checkpoint_gate.dart';
 import '../services/routine_engine.dart';
@@ -59,6 +60,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   late List<Block> _blocks;
   Timer? _timer;
   AppSettings _settings = const AppSettings();
+  List<Commitment> _commitments = const [];
   bool _reviewing = false;
   bool _alarmSilenced = false;
   Timer? _gateTimer;
@@ -107,6 +109,54 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
         });
       }
     }
+  }
+
+  /// Fixed events of this routine day: shown in the timeline, respected when
+  /// a checkpoint re-plans, and reminded shortly before they start.
+  Future<void> _loadCommitments() async {
+    try {
+      final commitments = await _db.getCommitmentsForDay(widget.day);
+      if (!mounted) return;
+      setState(() => _commitments = commitments);
+      if (widget.syncNotifications != null) return; // injected: no plugin
+      final date = DateTime.parse(widget.day);
+      await NotificationService.instance.scheduleCommitmentReminders(
+        day: widget.day,
+        items: [
+          for (final c in commitments)
+            (title: c.title, start: c.intervalOn(date).start),
+        ],
+      );
+    } catch (_) {
+      // Optional extra: the plan itself does not depend on it.
+    }
+  }
+
+  List<BusyInterval> _busy() {
+    final date = DateTime.parse(widget.day);
+    return [for (final c in _commitments) c.intervalOn(date)];
+  }
+
+  /// Blocks and fixed events in time order (blocks keep their own order).
+  List<Widget> _timelineItems(int currentIndex) {
+    final date = DateTime.parse(widget.day);
+    final waiting = [..._commitments]
+      ..sort((a, b) => a.startMinutes.compareTo(b.startMinutes));
+    Widget tile(Commitment c) =>
+        _CommitmentTile(key: ValueKey('commitment-${c.id}'), commitment: c);
+    final items = <Widget>[];
+    for (var i = 0; i < _blocks.length; i++) {
+      final start = _blocks[i].plannedStart;
+      if (start != null) {
+        while (waiting.isNotEmpty &&
+            !waiting.first.intervalOn(date).start.isAfter(start)) {
+          items.add(tile(waiting.removeAt(0)));
+        }
+      }
+      items.add(_BlockTile(block: _blocks[i], isCurrent: i == currentIndex));
+    }
+    items.addAll(waiting.map(tile));
+    return items;
   }
 
   Future<void> _loadSettings() async {
@@ -214,6 +264,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       unawaited(_refreshCheckpoints());
       unawaited(_loadSettings());
+      unawaited(_loadCommitments());
     }
   }
 
@@ -224,6 +275,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     unawaited(_refreshCheckpoints());
     unawaited(_loadSettings());
+    unawaited(_loadCommitments());
     _gateTimer = Timer.periodic(const Duration(seconds: 15), (_) => _evaluateGate());
     // If a block was already running when the app was closed, resume
     // ticking so the on-screen timer keeps advancing.
@@ -456,7 +508,8 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
             return RoutineEngine.recalculateFromCheckpoint(
               currentBlocks: _blocks, categories: widget.categories,
               now: previewedAt!, dayEnd: dayEnd,
-              bufferMinutes: settings.bufferMinutes);
+              bufferMinutes: settings.bufferMinutes,
+              busy: _busy());
           },
           distillPreview: () {
             previewedAt = _now;
@@ -626,14 +679,9 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
                     icon: Icons.event_note_outlined,
                     message: 'No blocks in this routine',
                   )
-                : ListView.builder(
+                : ListView(
                     padding: const EdgeInsets.only(bottom: 8),
-                    itemCount: _blocks.length,
-                    itemBuilder: (context, index) {
-                      final block = _blocks[index];
-                      final isCurrent = index == currentIndex;
-                      return _BlockTile(block: block, isCurrent: isCurrent);
-                    },
+                    children: _timelineItems(currentIndex),
                   ),
           ),
           AnimatedSwitcher(
@@ -1030,6 +1078,33 @@ class _BreakPanel extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A fixed event (class, work) shown in the timeline. Not a block: it has no
+/// timer and never counts toward "done".
+class _CommitmentTile extends StatelessWidget {
+  final Commitment commitment;
+
+  const _CommitmentTile({super.key, required this.commitment});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      decoration: BoxDecoration(
+        color: scheme.tertiaryContainer.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: ListTile(
+        leading: const Icon(Icons.event),
+        title: Text(commitment.title),
+        subtitle: Text(
+          'Fixed · ${Commitment.hm(commitment.startMinutes)}–${Commitment.hm(commitment.endMinutes)}',
+        ),
       ),
     );
   }

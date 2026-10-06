@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import '../models/app_settings.dart';
+import '../models/commitment.dart';
 import '../models/category.dart';
 import '../models/block.dart';
 
@@ -229,29 +230,136 @@ class RoutineEngine {
     List<Category> categories,
     Map<String, int> allocation,
     Set<String> excludedIds,
+  ) => _materialize(_plan(categories, allocation), excludedIds);
+
+  /// Block sizes in category order, without creating any block or ID yet.
+  static List<({Category category, int minutes})> _plan(
+    List<Category> categories,
+    Map<String, int> allocation,
   ) {
-    final blocks = <Block>[];
+    final plan = <({Category category, int minutes})>[];
     for (final category in categories.where((c) => c.enabled)) {
       final minutes = allocation[category.id] ?? 0;
       if (minutes <= 0) continue;
       final count = _blockCount(category, minutes);
       for (var i = 0; i < count; i++) {
-        String id;
-        do {
-          id = 'block_${_idPrefix}_${_nextBlockId++}';
-        } while (excludedIds.contains(id));
-        blocks.add(
-          Block(
-            id: id,
-            categoryId: category.id,
-            title: category.name,
-            plannedDurationMinutes:
-                minutes ~/ count + (i < minutes % count ? 1 : 0),
-          ),
-        );
+        plan.add((
+          category: category,
+          minutes: minutes ~/ count + (i < minutes % count ? 1 : 0),
+        ));
       }
     }
+    return plan;
+  }
+
+  static List<Block> _materialize(
+    List<({Category category, int minutes})> plan,
+    Set<String> excludedIds,
+  ) {
+    final blocks = <Block>[];
+    for (final item in plan) {
+      String id;
+      do {
+        id = 'block_${_idPrefix}_${_nextBlockId++}';
+      } while (excludedIds.contains(id));
+      blocks.add(
+        Block(
+          id: id,
+          categoryId: item.category.id,
+          title: item.category.name,
+          plannedDurationMinutes: item.minutes,
+        ),
+      );
+    }
     return blocks;
+  }
+
+  /// Free stretches between [start] and [end] once [busy] intervals are cut
+  /// out. A block must end [marginMinutes] before a commitment begins.
+  static List<BusyInterval> _freeWindows(
+    DateTime start,
+    DateTime end,
+    List<BusyInterval> busy,
+    int marginMinutes,
+  ) {
+    if (!end.isAfter(start)) return [];
+    final sorted = busy.where((b) => b.end.isAfter(b.start)).toList()
+      ..sort((a, b) => a.start.compareTo(b.start));
+    final margin = Duration(minutes: math.max(0, marginMinutes));
+    final windows = <BusyInterval>[];
+    var cursor = start;
+    for (final b in sorted) {
+      if (!b.end.isAfter(cursor)) continue; // already behind us
+      if (!b.start.isBefore(end)) break;
+      final windowEnd = b.start.subtract(margin);
+      if (windowEnd.isAfter(cursor)) windows.add((start: cursor, end: windowEnd));
+      cursor = b.end;
+    }
+    if (end.isAfter(cursor)) windows.add((start: cursor, end: end));
+    return windows;
+  }
+
+  /// First-fit placement of whole blocks into [windows], a [gap] apart.
+  /// Returns null when they do not all fit. Blocks are never split around a
+  /// commitment: a focus block stays one piece.
+  static List<DateTime>? _packStarts(
+    List<int> durations,
+    List<BusyInterval> windows,
+    int gap,
+  ) {
+    final starts = <DateTime>[];
+    if (durations.isEmpty) return starts;
+    if (windows.isEmpty) return null;
+    var w = 0;
+    var cursor = windows[0].start;
+    for (final minutes in durations) {
+      while (true) {
+        if (w >= windows.length) return null;
+        final end = cursor.add(Duration(minutes: minutes));
+        if (!end.isAfter(windows[w].end)) {
+          starts.add(cursor);
+          cursor = end.add(Duration(minutes: gap));
+          break;
+        }
+        w++;
+        if (w < windows.length) cursor = windows[w].start;
+      }
+    }
+    return starts;
+  }
+
+  static List<Block> _generateAround({
+    required List<Category> enabled,
+    required DateTime startTime,
+    required DateTime dayEnd,
+    required int gap,
+    required Map<String, int> credits,
+    required Set<String> excludedIds,
+    required List<BusyInterval> busy,
+  }) {
+    final windows = _freeWindows(startTime, dayEnd, busy, gap);
+    final free = windows.fold<int>(
+      0,
+      (sum, w) => sum + w.end.difference(w.start).inMinutes,
+    );
+    // Same descent as the open-day case: the biggest budget whose blocks
+    // really fit between the commitments. No block or ID exists until then.
+    for (var budget = free; budget > 0; budget--) {
+      final plan = _plan(enabled, _allocate(enabled, budget, credits));
+      final starts = _packStarts([for (final p in plan) p.minutes], windows, gap);
+      if (starts == null) continue;
+      final blocks = _materialize(plan, excludedIds);
+      return [
+        for (var i = 0; i < blocks.length; i++)
+          blocks[i].copyWith(
+            plannedStart: starts[i],
+            plannedEnd: starts[i].add(
+              Duration(minutes: blocks[i].plannedDurationMinutes),
+            ),
+          ),
+      ];
+    }
+    return [];
   }
 
   /// Places already-budgeted blocks, with a nonnegative gap between them.
@@ -281,6 +389,7 @@ class RoutineEngine {
     required DateTime startTime,
     required DateTime dayEnd,
     required int bufferMinutes,
+    List<BusyInterval> busy = const [],
   }) => _generate(
     categories: categories,
     startTime: startTime,
@@ -288,6 +397,7 @@ class RoutineEngine {
     bufferMinutes: bufferMinutes,
     credits: const {},
     excludedIds: const {},
+    busy: busy,
   );
 
   static List<Block> _generate({
@@ -297,11 +407,23 @@ class RoutineEngine {
     required int bufferMinutes,
     required Map<String, int> credits,
     required Set<String> excludedIds,
+    List<BusyInterval> busy = const [],
   }) {
     final enabled = categories.where((c) => c.enabled).toList();
     if (enabled.isEmpty) return [];
-    final window = dayEnd.difference(startTime).inMinutes;
     final gap = math.max(0, bufferMinutes);
+    if (busy.isNotEmpty) {
+      return _generateAround(
+        enabled: enabled,
+        startTime: startTime,
+        dayEnd: dayEnd,
+        gap: gap,
+        credits: credits,
+        excludedIds: excludedIds,
+        busy: busy,
+      );
+    }
+    final window = dayEnd.difference(startTime).inMinutes;
     // Descend to the greatest feasible productive budget. Integer apportionment
     // can change category/block counts non-monotonically, so binary search (or
     // iteratively subtracting the previous gap estimate) can miss a valid fit.
@@ -404,6 +526,7 @@ class RoutineEngine {
     required DateTime now,
     required DateTime dayEnd,
     required int bufferMinutes,
+    List<BusyInterval> busy = const [],
   }) {
     final untouched = currentBlocks
         .where((b) => b.status != BlockStatus.pending)
@@ -459,6 +582,7 @@ class RoutineEngine {
         bufferMinutes: bufferMinutes,
         credits: creditedMinutes,
         excludedIds: currentBlocks.map((b) => b.id).toSet(),
+        busy: busy,
       ),
     ];
   }

@@ -1,5 +1,5 @@
 /// Events the app can alert about. Each has its own sound/vibration style.
-enum AlertEvent { blockStart, blockEnd, breakEnd, checkpoint }
+enum AlertEvent { blockStart, blockEnd, breakEnd, checkpoint, commitment }
 
 enum AlertSound { standard, alarm, silent }
 
@@ -9,6 +9,7 @@ extension AlertEventLabel on AlertEvent {
     AlertEvent.blockEnd => 'Block ends',
     AlertEvent.breakEnd => 'Break ends',
     AlertEvent.checkpoint => 'Checkpoint reminder',
+    AlertEvent.commitment => 'Commitment starts soon',
   };
 }
 

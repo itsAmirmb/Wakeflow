@@ -7,6 +7,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../models/block.dart';
 import '../models/category.dart';
+import '../models/commitment.dart';
 import '../models/day_mode.dart';
 import '../models/app_settings.dart';
 import '../data/default_categories.dart';
@@ -39,7 +40,7 @@ class DatabaseService {
 
     return openDatabase(
       path,
-      version: 12,
+      version: 13,
       onCreate: createSchema,
       onUpgrade: upgradeSchema,
     );
@@ -108,6 +109,7 @@ class DatabaseService {
     await _createDayMetaTable(db);
     await _createSettingsTable(db);
     await _createCheckpointsTable(db);
+    await _createCommitmentsTable(db);
 
     // Seed categories on first run so the app always has something
     // to allocate time against.
@@ -188,6 +190,10 @@ class DatabaseService {
         'INTEGER NOT NULL DEFAULT 5',
       );
     }
+    // v12 -> v13: fixed commitments (classes, work shifts).
+    if (oldVersion < 13) {
+      await _createCommitmentsTable(db);
+    }
     // v11 -> v12: per-event alert styles (JSON).
     if (oldVersion < 12) {
       await ensureColumn(db, 'settings', 'alerts', "TEXT NOT NULL DEFAULT '{}'");
@@ -205,6 +211,15 @@ class DatabaseService {
         'INTEGER NOT NULL DEFAULT 240',
       );
     }
+  }
+
+  static Future<void> _createCommitmentsTable(DatabaseExecutor db) async {
+    await db.execute('''CREATE TABLE IF NOT EXISTS commitments (
+      id TEXT PRIMARY KEY, title TEXT NOT NULL,
+      startMinutes INTEGER NOT NULL, endMinutes INTEGER NOT NULL,
+      weekdays TEXT NOT NULL DEFAULT '', onDate TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1
+    )''');
   }
 
   static Future<void> _createCheckpointsTable(DatabaseExecutor db) async {
@@ -329,6 +344,34 @@ class DatabaseService {
   /// insert-or-replace as saveCategory, used when editing an existing
   /// category rather than seeding a new one.
   Future<void> updateCategory(Category category) => saveCategory(category);
+
+  // ---------- Commitments ----------
+
+  Future<List<Commitment>> getCommitments() async {
+    final db = await database;
+    final rows = await db.query('commitments', orderBy: 'startMinutes ASC');
+    return rows.map(Commitment.fromMap).toList();
+  }
+
+  Future<void> saveCommitment(Commitment commitment) async {
+    final db = await database;
+    await db.insert(
+      'commitments',
+      commitment.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> deleteCommitment(String id) async {
+    final db = await database;
+    await db.delete('commitments', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Enabled commitments that happen on the given routine day (yyyy-MM-dd).
+  Future<List<Commitment>> getCommitmentsForDay(String day) async {
+    final date = DateTime.parse(day);
+    return (await getCommitments()).where((c) => c.occursOn(date)).toList();
+  }
 
   /// Removes a category. Its past blocks are kept: Stats and reports rebuild
   /// the category from the blocks' own category id and title.
