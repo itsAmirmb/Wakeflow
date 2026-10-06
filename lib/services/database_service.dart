@@ -40,7 +40,7 @@ class DatabaseService {
 
     return openDatabase(
       path,
-      version: 13,
+      version: 14,
       onCreate: createSchema,
       onUpgrade: upgradeSchema,
     );
@@ -190,6 +190,15 @@ class DatabaseService {
         'INTEGER NOT NULL DEFAULT 5',
       );
     }
+    // v13 -> v14: long break after a finished category.
+    if (oldVersion < 14) {
+      await ensureColumn(
+        db,
+        'settings',
+        'longBreakMinutes',
+        'INTEGER NOT NULL DEFAULT 30',
+      );
+    }
     // v12 -> v13: fixed commitments (classes, work shifts).
     if (oldVersion < 13) {
       await _createCommitmentsTable(db);
@@ -294,6 +303,7 @@ class DatabaseService {
       CREATE TABLE IF NOT EXISTS settings (
         id INTEGER PRIMARY KEY,
         bufferMinutes INTEGER NOT NULL,
+        longBreakMinutes INTEGER NOT NULL DEFAULT 30,
         wakeReminderHour INTEGER NOT NULL,
         wakeReminderMinute INTEGER NOT NULL,
         themeMode TEXT NOT NULL DEFAULT 'system',

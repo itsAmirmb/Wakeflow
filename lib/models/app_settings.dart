@@ -10,6 +10,9 @@ enum DistillKeepMode { minutes, percent }
 /// is simpler for the handful of fields we have).
 class AppSettings {
   final int bufferMinutes;
+
+  /// Break after the LAST block of a category (the category is finished).
+  final int longBreakMinutes;
   final int wakeReminderHour;
   final int wakeReminderMinute;
   final String themeMode; // 'system' | 'light' | 'dark'
@@ -29,6 +32,7 @@ class AppSettings {
 
   const AppSettings({
     this.bufferMinutes = 10,
+    this.longBreakMinutes = 30,
     this.wakeReminderHour = 8,
     this.wakeReminderMinute = 0,
     this.themeMode = 'system',
@@ -44,6 +48,7 @@ class AppSettings {
 
   AppSettings copyWith({
     int? bufferMinutes,
+    int? longBreakMinutes,
     int? wakeReminderHour,
     int? wakeReminderMinute,
     String? themeMode,
@@ -55,6 +60,7 @@ class AppSettings {
   }) {
     return AppSettings(
       bufferMinutes: bufferMinutes ?? this.bufferMinutes,
+      longBreakMinutes: longBreakMinutes ?? this.longBreakMinutes,
       wakeReminderHour: wakeReminderHour ?? this.wakeReminderHour,
       wakeReminderMinute: wakeReminderMinute ?? this.wakeReminderMinute,
       themeMode: themeMode ?? this.themeMode,
@@ -105,6 +111,7 @@ class AppSettings {
     return {
       'id': 0, // single row
       'bufferMinutes': bufferMinutes,
+      'longBreakMinutes': longBreakMinutes,
       'wakeReminderHour': wakeReminderHour,
       'wakeReminderMinute': wakeReminderMinute,
       'themeMode': themeMode,
@@ -123,6 +130,7 @@ class AppSettings {
   factory AppSettings.fromMap(Map<String, Object?> map) {
     return AppSettings(
       bufferMinutes: map['bufferMinutes'] as int,
+      longBreakMinutes: ((map['longBreakMinutes'] as int?) ?? 30).clamp(0, 180),
       wakeReminderHour: map['wakeReminderHour'] as int,
       wakeReminderMinute: map['wakeReminderMinute'] as int,
       // Older rows (pre-theme-setting) won't have this column — default

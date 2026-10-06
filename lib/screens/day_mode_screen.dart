@@ -35,6 +35,7 @@ class _DayModeScreenState extends State<DayModeScreen> {
   // generated (not while editing), so backing out discards them.
   List<Category>? _categories;
   int _bufferMinutes = 10;
+  int _longBreakMinutes = 30;
   // Fixed events of the day being planned; blocks are scheduled around them.
   List<Commitment> _commitments = const [];
   String? _planDay;
@@ -60,6 +61,7 @@ class _DayModeScreenState extends State<DayModeScreen> {
     setState(() {
       _categories = List<Category>.of(categories);
       _bufferMinutes = settings.bufferMinutes;
+      _longBreakMinutes = settings.longBreakMinutes;
       _planDay = planDay;
       _commitments = commitments;
     });
@@ -170,6 +172,7 @@ class _DayModeScreenState extends State<DayModeScreen> {
             startTime: wakeTime,
             dayEnd: dayEnd,
             bufferMinutes: _bufferMinutes,
+            longBreakMinutes: _longBreakMinutes,
             busy: busy,
           )
         : RoutineEngine.recalculateFromCheckpoint(
@@ -178,6 +181,7 @@ class _DayModeScreenState extends State<DayModeScreen> {
             now: wakeTime,
             dayEnd: dayEnd,
             bufferMinutes: _bufferMinutes,
+            longBreakMinutes: _longBreakMinutes,
             busy: busy,
           );
 

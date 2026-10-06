@@ -16,6 +16,7 @@ import '../services/break_state.dart';
 import '../services/checkpoint_gate.dart';
 import '../services/routine_engine.dart';
 import '../services/database_service.dart';
+import '../services/alarm_sound.dart';
 import '../services/notification_service.dart';
 import '../widgets/block_status_style.dart';
 import '../widgets/circular_timer.dart';
@@ -63,6 +64,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   List<Commitment> _commitments = const [];
   bool _reviewing = false;
   bool _alarmSilenced = false;
+  bool _breakRang = false;
   Timer? _gateTimer;
   DateTime? _gateWake;
   DateTime? _gateEnd;
@@ -214,13 +216,17 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   BreakState? _break() => BreakState.derive(
     blocks: _blocks,
     bufferMinutes: _settings.bufferMinutes,
+    longBreakMinutes: _settings.longBreakMinutes,
     now: _now,
   );
 
   void _resumeBreakTicking() {
     final state = _break();
-    if (state != null && !state.isOver(_now) && _timer?.isActive != true) {
-      _startTicking();
+    if (state != null && !state.isOver(_now)) {
+      // Re-arm after an app restart/resume: the alarm is only ever scheduled
+      // when COMPLETE is tapped, so it would otherwise be lost.
+      unawaited(_scheduleBreakAlarm(state));
+      if (_timer?.isActive != true) _startTicking();
     }
   }
 
@@ -232,6 +238,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
         await NotificationService.instance.scheduleBreakEnd(
           when: state.end,
           nextTitle: state.next.title,
+          long: state.isLong,
         );
       }
     } catch (_) {
@@ -240,6 +247,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _cancelBreakAlarm() async {
+    unawaited(AlarmSound.stop());
     try {
       if (widget.cancelBreakAlarm != null) {
         await widget.cancelBreakAlarm!();
@@ -291,6 +299,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _gateTimer?.cancel();
+    unawaited(AlarmSound.stop());
     super.dispose();
   }
 
@@ -364,7 +373,20 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
       setState(() {});
       // Keep ticking while a block runs or a break is counting down.
       final running = _currentBlock?.status == BlockStatus.active;
-      final onBreak = _break()?.isOver(_now) == false;
+      final breakState = _break();
+      // Break just ended while the app is open: ring in-app (alarm stream),
+      // independent of notification channel/ringer settings.
+      if (breakState != null && breakState.isOver(_now) &&
+          !_alarmSilenced && !_breakRang) {
+        _breakRang = true;
+        unawaited(
+          AlarmSound.play(
+            breakState.isLong ? 'long_break' : 'short_break',
+            loop: true,
+          ),
+        );
+      }
+      final onBreak = breakState?.isOver(_now) == false;
       if (!running && !onBreak) _stopTicking();
     });
   }
@@ -397,7 +419,14 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
       _blocks[index] = updated;
     });
     _startTicking();
-    unawaited(_cancelBreakAlarm());
+    unawaited(_cancelBreakAlarm()); // also stops a still-ringing break alarm
+    // First task of the day has its own sound; later ones share another.
+    final firstOfDay = !_blocks.any(
+      (b) => b.id != updated.id && b.actualStart != null,
+    );
+    unawaited(
+      AlarmSound.play(firstOfDay ? 'session_start' : 'task_start'),
+    );
     _persist(updated);
   }
 
@@ -448,6 +477,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     setState(() {
       _blocks[index] = updated;
       _alarmSilenced = false;
+      _breakRang = false;
     });
     _persist(updated);
     // The break timer starts now; its end rings like an alarm.
@@ -455,6 +485,8 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     if (state != null) {
       _startTicking();
       unawaited(_scheduleBreakAlarm(state));
+    } else if (!_hasUnfinished) {
+      unawaited(AlarmSound.play('session_complete'));
     }
   }
 
@@ -478,6 +510,9 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   Future<void> _runCheckpoint({bool forced = false}) async {
     if (_reviewing) return;
     setState(() => _reviewing = true);
+    // A forced checkpoint stops the timer (below) and rings until the user
+    // acts on the review screen.
+    if (forced) unawaited(AlarmSound.play('teq_teq', loop: true));
     try {
       // A forced review freezes a running block first, so what is previewed
       // is exactly what gets saved.
@@ -509,9 +544,11 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
               currentBlocks: _blocks, categories: widget.categories,
               now: previewedAt!, dayEnd: dayEnd,
               bufferMinutes: settings.bufferMinutes,
+              longBreakMinutes: settings.longBreakMinutes,
               busy: _busy());
           },
           distillPreview: () {
+            unawaited(AlarmSound.stop());
             previewedAt = _now;
             return RoutineEngine.distill(
               currentBlocks: _blocks,
@@ -618,6 +655,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     } catch (error) {
       _showError('Could not open checkpoint. $error');
     } finally {
+      unawaited(AlarmSound.stop());
       if (mounted) setState(() => _reviewing = false);
     }
   }
@@ -1028,7 +1066,9 @@ class _BreakPanel extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            over ? 'BREAK OVER' : 'BREAK',
+            over
+                ? (state.isLong ? 'LONG BREAK OVER' : 'BREAK OVER')
+                : (state.isLong ? 'LONG BREAK' : 'BREAK'),
             style: Theme.of(context).textTheme.labelMedium?.copyWith(
               color: over ? scheme.error : scheme.tertiary,
               letterSpacing: 1.2,

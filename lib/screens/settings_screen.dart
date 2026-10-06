@@ -498,6 +498,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           ListTile(
+            leading: const Icon(Icons.weekend_outlined),
+            title: const Text('Long break (category finished)'),
+            subtitle: Text(
+              _settings.longBreakMinutes == 0
+                  ? 'No break after a finished category'
+                  : '${_settings.longBreakMinutes} minutes · after the last block of a category',
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Slider(
+              value: _settings.longBreakMinutes.toDouble().clamp(0, 90),
+              min: 0,
+              max: 90,
+              divisions: 18,
+              label: '${_settings.longBreakMinutes}m',
+              onChanged: (value) => setState(
+                () => _settings = _settings.copyWith(
+                  longBreakMinutes: value.round(),
+                ),
+              ),
+              onChangeEnd: (value) => _saveSettings(
+                _settings.copyWith(longBreakMinutes: value.round()),
+              ),
+            ),
+          ),
+          ListTile(
             leading: const Icon(Icons.restart_alt),
             title: const Text('Distillation: keep progress'),
             subtitle: Text(

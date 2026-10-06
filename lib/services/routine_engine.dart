@@ -305,20 +305,21 @@ class RoutineEngine {
   static List<DateTime>? _packStarts(
     List<int> durations,
     List<BusyInterval> windows,
-    int gap,
+    List<int> gapsAfter,
   ) {
     final starts = <DateTime>[];
     if (durations.isEmpty) return starts;
     if (windows.isEmpty) return null;
     var w = 0;
     var cursor = windows[0].start;
-    for (final minutes in durations) {
+    for (var i = 0; i < durations.length; i++) {
+      final minutes = durations[i];
       while (true) {
         if (w >= windows.length) return null;
         final end = cursor.add(Duration(minutes: minutes));
         if (!end.isAfter(windows[w].end)) {
           starts.add(cursor);
-          cursor = end.add(Duration(minutes: gap));
+          cursor = end.add(Duration(minutes: gapsAfter[i]));
           break;
         }
         w++;
@@ -333,6 +334,7 @@ class RoutineEngine {
     required DateTime startTime,
     required DateTime dayEnd,
     required int gap,
+    required int longGap,
     required Map<String, int> credits,
     required Set<String> excludedIds,
     required List<BusyInterval> busy,
@@ -346,7 +348,18 @@ class RoutineEngine {
     // really fit between the commitments. No block or ID exists until then.
     for (var budget = free; budget > 0; budget--) {
       final plan = _plan(enabled, _allocate(enabled, budget, credits));
-      final starts = _packStarts([for (final p in plan) p.minutes], windows, gap);
+      final gapsAfter = [
+        for (var i = 0; i < plan.length; i++)
+          (i + 1 < plan.length &&
+                  plan[i + 1].category.id != plan[i].category.id)
+              ? longGap
+              : gap,
+      ];
+      final starts = _packStarts(
+        [for (final p in plan) p.minutes],
+        windows,
+        gapsAfter,
+      );
       if (starts == null) continue;
       final blocks = _materialize(plan, excludedIds);
       return [
@@ -369,14 +382,23 @@ class RoutineEngine {
     required List<Block> blocks,
     required DateTime startTime,
     required int bufferMinutes,
+    int? longBreakMinutes,
   }) {
     final placed = <Block>[];
     var cursor = startTime;
     final gap = Duration(minutes: math.max(0, bufferMinutes));
-    for (final block in blocks) {
+    final longGap = Duration(
+      minutes: math.max(0, longBreakMinutes ?? bufferMinutes),
+    );
+    for (var i = 0; i < blocks.length; i++) {
+      final block = blocks[i];
       final end = cursor.add(Duration(minutes: block.plannedDurationMinutes));
       placed.add(block.copyWith(plannedStart: cursor, plannedEnd: end));
-      cursor = end.add(gap);
+      // The last block of a category is followed by the long break.
+      final finishesCategory = !blocks
+          .skip(i + 1)
+          .any((b) => b.categoryId == block.categoryId);
+      cursor = end.add(finishesCategory ? longGap : gap);
     }
     return placed;
   }
@@ -389,12 +411,14 @@ class RoutineEngine {
     required DateTime startTime,
     required DateTime dayEnd,
     required int bufferMinutes,
+    int? longBreakMinutes,
     List<BusyInterval> busy = const [],
   }) => _generate(
     categories: categories,
     startTime: startTime,
     dayEnd: dayEnd,
     bufferMinutes: bufferMinutes,
+    longBreakMinutes: longBreakMinutes,
     credits: const {},
     excludedIds: const {},
     busy: busy,
@@ -405,6 +429,7 @@ class RoutineEngine {
     required DateTime startTime,
     required DateTime dayEnd,
     required int bufferMinutes,
+    int? longBreakMinutes,
     required Map<String, int> credits,
     required Set<String> excludedIds,
     List<BusyInterval> busy = const [],
@@ -412,12 +437,14 @@ class RoutineEngine {
     final enabled = categories.where((c) => c.enabled).toList();
     if (enabled.isEmpty) return [];
     final gap = math.max(0, bufferMinutes);
+    final longGap = math.max(0, longBreakMinutes ?? bufferMinutes);
     if (busy.isNotEmpty) {
       return _generateAround(
         enabled: enabled,
         startTime: startTime,
         dayEnd: dayEnd,
         gap: gap,
+        longGap: longGap,
         credits: credits,
         excludedIds: excludedIds,
         busy: busy,
@@ -438,11 +465,19 @@ class RoutineEngine {
       // Category maximums can leave part of the budget unallocated, so fit
       // what is really planned (equal to [budget] when nothing is capped).
       final planned = allocation.values.fold<int>(0, (sum, v) => sum + v);
-      if (planned + math.max(0, count - 1) * gap <= window) {
+      // Blocks are grouped by category: one long break after each category
+      // except the last, a normal gap between the other blocks.
+      final categoriesUsed = enabled
+          .where((c) => (allocation[c.id] ?? 0) > 0)
+          .length;
+      final longs = math.max(0, categoriesUsed - 1);
+      final shorts = math.max(0, count - 1 - longs);
+      if (planned + shorts * gap + longs * longGap <= window) {
         return placeOnTimeline(
           blocks: _split(enabled, allocation, excludedIds),
           startTime: startTime,
           bufferMinutes: gap,
+          longBreakMinutes: longGap,
         );
       }
     }
@@ -526,6 +561,7 @@ class RoutineEngine {
     required DateTime now,
     required DateTime dayEnd,
     required int bufferMinutes,
+    int? longBreakMinutes,
     List<BusyInterval> busy = const [],
   }) {
     final untouched = currentBlocks
@@ -580,6 +616,7 @@ class RoutineEngine {
         startTime: startTime,
         dayEnd: dayEnd,
         bufferMinutes: bufferMinutes,
+        longBreakMinutes: longBreakMinutes,
         credits: creditedMinutes,
         excludedIds: currentBlocks.map((b) => b.id).toSet(),
         busy: busy,

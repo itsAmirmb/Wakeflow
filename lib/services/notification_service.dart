@@ -32,7 +32,9 @@ class NotificationService {
   Future<void>? _initialization;
   Future<void> _queue = Future<void>.value();
 
-  static const _channelId = 'wakeflow_blocks';
+  // v2: Android freezes sound/importance per channel id, so a channel that
+  // was ever created silent stays silent. A new id gives a fresh channel.
+  static const _channelId = 'wakeflow_blocks_v3';
   static const _channelName = 'Routine Blocks';
   static const _wakeReminderId = 0;
   static const _wakeSnoozeId = 1;
@@ -57,6 +59,8 @@ class NotificationService {
           android: AndroidInitializationSettings('@mipmap/ic_launcher'),
         ),
       );
+      await _android?.deleteNotificationChannel('wakeflow_blocks');
+      await _android?.deleteNotificationChannel('wakeflow_blocks_v2');
       await _android?.createNotificationChannel(
         const AndroidNotificationChannel(
           _channelId,
@@ -137,21 +141,23 @@ class NotificationService {
   /// event + sound + vibration combination gets its own deterministic channel.
   AndroidNotificationDetails _androidDetails(
     AlertEvent? event,
-    AlertStyle? style,
-  ) {
+    AlertStyle? style, [
+    String? soundRes,
+  ]) {
     if (event == null || style == null) {
       return const AndroidNotificationDetails(
         _channelId,
         _channelName,
         importance: Importance.high,
         priority: Priority.high,
+        sound: RawResourceAndroidNotificationSound('wf_chime'),
       );
     }
     final alarm = style.sound == AlertSound.alarm;
     final silent = style.sound == AlertSound.silent;
     final loop = style.repeat && !silent;
     return AndroidNotificationDetails(
-      'wf_${event.name}_${style.sound.name}_${style.vibrate ? 'vib' : 'novib'}',
+      'wf4_${event.name}_${soundRes ?? style.sound.name}_${style.vibrate ? 'vib' : 'novib'}',
       'WakeFlow: ${event.label}',
       channelDescription: 'Alerts for: ${event.label}',
       importance: silent
@@ -161,11 +167,13 @@ class NotificationService {
           : Importance.high,
       priority: Priority.high,
       playSound: !silent,
-      sound: alarm
-          ? const UriAndroidNotificationSound(
-              'content://settings/system/alarm_alert',
-            )
-          : null,
+      // Bundled sounds: the phone's default tones can point at a missing
+      // media entry, which makes the notification silent.
+      sound: silent
+          ? null
+          : RawResourceAndroidNotificationSound(
+              soundRes ?? (alarm ? 'wf_alarm' : 'wf_chime'),
+            ),
       enableVibration: style.vibrate,
       audioAttributesUsage: alarm
           ? AudioAttributesUsage.alarm
@@ -187,6 +195,7 @@ class NotificationService {
     required DateTime when,
     String? payload,
     AlertEvent? event,
+    String? soundRes,
   }) async {
     if (!when.isAfter(_now())) return;
     AlertStyle? style;
@@ -209,7 +218,7 @@ class NotificationService {
       title,
       body,
       tz.TZDateTime.from(when, tz.UTC),
-      NotificationDetails(android: _androidDetails(event, style)),
+      NotificationDetails(android: _androidDetails(event, style, soundRes)),
       androidScheduleMode: mode,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
@@ -233,6 +242,8 @@ class NotificationService {
   /// active timer, never a pending block's original planned end.
   Future<void> scheduleForBlocks(List<Block> blocks) => _serial(() async {
     await init();
+    // The very first task of the day gets its own sound.
+    final nothingStarted = !blocks.any((b) => b.actualStart != null);
     for (final block in blocks) {
       if (block.status != BlockStatus.pending ||
           block.plannedStart == null ||
@@ -246,6 +257,9 @@ class NotificationService {
         when: block.plannedStart!,
         payload: _payload(block.id, false),
         event: AlertEvent.blockStart,
+        soundRes: nothingStarted && block.id == blocks.first.id
+            ? 'session_start'
+            : 'task_start',
       );
     }
   });
@@ -403,6 +417,7 @@ class NotificationService {
         when: when,
         payload: payload,
         event: AlertEvent.checkpoint,
+        soundRes: 'teq_teq',
       );
     }
   });
@@ -451,6 +466,7 @@ class NotificationService {
   Future<void> scheduleBreakEnd({
     required DateTime when,
     required String nextTitle,
+    bool long = false,
   }) => _serial(() async {
     await init();
     await _plugin.cancel(_breakAlarmId);
@@ -461,6 +477,7 @@ class NotificationService {
       when: when,
       payload: jsonEncode(['wakeflow-break-v1']),
       event: AlertEvent.breakEnd,
+      soundRes: long ? 'long_break' : 'short_break',
     );
   });
 
