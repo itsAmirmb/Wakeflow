@@ -17,6 +17,7 @@ import '../services/checkpoint_gate.dart';
 import '../services/routine_engine.dart';
 import '../services/database_service.dart';
 import '../services/alarm_sound.dart';
+import 'category_notes_screen.dart';
 import '../services/notification_service.dart';
 import '../widgets/block_status_style.dart';
 import '../widgets/circular_timer.dart';
@@ -65,6 +66,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   bool _reviewing = false;
   bool _alarmSilenced = false;
   bool _breakRang = false;
+  Map<String, int> _noteCounts = const {};
   Timer? _gateTimer;
   DateTime? _gateWake;
   DateTime? _gateEnd;
@@ -157,10 +159,36 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
           items.add(tile(waiting.removeAt(0)));
         }
       }
-      items.add(_BlockTile(block: _blocks[i], isCurrent: i == currentIndex));
+      final block = _blocks[i];
+      items.add(
+        _BlockTile(
+          block: block,
+          isCurrent: i == currentIndex,
+          noteCount: _noteCounts[block.categoryId] ?? 0,
+          onNotes: () => _openNotes(block),
+        ),
+      );
     }
     items.addAll(waiting.map(tile));
     return items;
+  }
+
+  /// Notes are optional: the screen works the same when none exist.
+  Future<void> _loadNoteCounts() async {
+    try {
+      final counts = await _db.getNoteCounts();
+      if (mounted) setState(() => _noteCounts = counts);
+    } catch (_) {}
+  }
+
+  Future<void> _openNotes(Block block) async {
+    Category? category;
+    for (final c in widget.categories) {
+      if (c.id == block.categoryId) category = c;
+    }
+    if (category == null) return;
+    await showCategoryNotesSheet(context, category);
+    unawaited(_loadNoteCounts());
   }
 
   Future<void> _loadSettings() async {
@@ -300,6 +328,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     unawaited(_refreshCheckpoints());
     unawaited(_loadSettings());
     unawaited(_loadCommitments());
+    unawaited(_loadNoteCounts());
     _gateTimer = Timer.periodic(const Duration(seconds: 15), (_) => _evaluateGate());
     // If a block was already running when the app was closed, resume
     // ticking so the on-screen timer keeps advancing.
@@ -778,6 +807,8 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
                     canComplete: _canComplete(currentBlock),
                     completeHint: _unlockHint(currentBlock),
                     onSkip: () => _actOn(currentBlock, _skipCurrent),
+                    noteCount: _noteCounts[currentBlock.categoryId] ?? 0,
+                    onNotes: () => _openNotes(currentBlock),
                   )
                 : const _DayCompletePanel(key: ValueKey('day-complete')),
           ),
@@ -790,8 +821,15 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
 class _BlockTile extends StatelessWidget {
   final Block block;
   final bool isCurrent;
+  final int noteCount;
+  final VoidCallback? onNotes;
 
-  const _BlockTile({required this.block, required this.isCurrent});
+  const _BlockTile({
+    required this.block,
+    required this.isCurrent,
+    this.noteCount = 0,
+    this.onNotes,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -832,6 +870,17 @@ class _BlockTile extends StatelessWidget {
           ),
         ),
         subtitle: Text(_subtitle(style.label)),
+        // Only categories that have notes show the shortcut.
+        trailing: noteCount > 0 && onNotes != null
+            ? IconButton(
+                tooltip: 'Notes',
+                onPressed: onNotes,
+                icon: Badge(
+                  label: Text('$noteCount'),
+                  child: const Icon(Icons.sticky_note_2_outlined),
+                ),
+              )
+            : null,
       ),
     );
   }
@@ -895,6 +944,8 @@ class _CurrentBlockPanel extends StatelessWidget {
   final VoidCallback onSkip;
   final bool canComplete;
   final String completeHint;
+  final int noteCount;
+  final VoidCallback? onNotes;
 
   const _CurrentBlockPanel({
     super.key,
@@ -906,6 +957,8 @@ class _CurrentBlockPanel extends StatelessWidget {
     required this.onSkip,
     required this.canComplete,
     required this.completeHint,
+    this.noteCount = 0,
+    this.onNotes,
   });
 
   @override
@@ -932,13 +985,38 @@ class _CurrentBlockPanel extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            'CURRENT',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 1.2,
-              color: scheme.primary,
+          SizedBox(
+            height: 32,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Text(
+                  'CURRENT',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.2,
+                    color: scheme.primary,
+                  ),
+                ),
+                if (noteCount > 0 && onNotes != null)
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: IconButton(
+                      tooltip: 'Notes',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 36,
+                        height: 32,
+                      ),
+                      onPressed: onNotes,
+                      icon: Badge(
+                        label: Text('$noteCount'),
+                        child: const Icon(Icons.sticky_note_2_outlined),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
           const SizedBox(height: 4),

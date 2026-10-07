@@ -10,6 +10,7 @@ import '../models/category.dart';
 import '../models/commitment.dart';
 import '../models/day_mode.dart';
 import '../models/app_settings.dart';
+import '../models/category_note.dart';
 import '../models/reward.dart';
 import 'credit_service.dart';
 import '../data/default_categories.dart';
@@ -42,7 +43,7 @@ class DatabaseService {
 
     return openDatabase(
       path,
-      version: 17,
+      version: 18,
       onCreate: createSchema,
       onUpgrade: upgradeSchema,
     );
@@ -113,6 +114,7 @@ class DatabaseService {
     await _createCheckpointsTable(db);
     await _createCommitmentsTable(db);
     await _createCreditLedgerTable(db);
+    await _createCategoryNotesTable(db);
 
     // Seed categories on first run so the app always has something
     // to allocate time against.
@@ -193,6 +195,10 @@ class DatabaseService {
         'INTEGER NOT NULL DEFAULT 5',
       );
     }
+    // v17 -> v18: notes attached to categories.
+    if (oldVersion < 18) {
+      await _createCategoryNotesTable(db);
+    }
     // v16 -> v17: remember the last routine target.
     if (oldVersion < 17) {
       await ensureColumn(
@@ -271,6 +277,20 @@ class DatabaseService {
     await db.execute(
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_credit_block '
       'ON credit_ledger(blockId) WHERE blockId IS NOT NULL',
+    );
+  }
+
+  static Future<void> _createCategoryNotesTable(DatabaseExecutor db) async {
+    await db.execute('''CREATE TABLE IF NOT EXISTS category_notes (
+      id TEXT PRIMARY KEY,
+      categoryId TEXT NOT NULL,
+      text TEXT NOT NULL,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    )''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_notes_category '
+      'ON category_notes(categoryId)',
     );
   }
 
@@ -445,7 +465,48 @@ class DatabaseService {
   /// the category from the blocks' own category id and title.
   Future<void> deleteCategory(String id) async {
     final db = await database;
-    await db.delete('categories', where: 'id = ?', whereArgs: [id]);
+    // Notes belong to their category; removing it must not leave them behind.
+    await db.transaction((txn) async {
+      await txn.delete('category_notes', where: 'categoryId = ?', whereArgs: [id]);
+      await txn.delete('categories', where: 'id = ?', whereArgs: [id]);
+    });
+  }
+
+  // ---------- Category notes ----------
+
+  /// Newest first.
+  Future<List<CategoryNote>> getNotes(String categoryId) async {
+    final db = await database;
+    final rows = await db.query(
+      'category_notes',
+      where: 'categoryId = ?',
+      whereArgs: [categoryId],
+      orderBy: 'createdAt DESC',
+    );
+    return rows.map(CategoryNote.fromMap).toList();
+  }
+
+  /// Number of notes per category id (categories without notes are absent).
+  Future<Map<String, int>> getNoteCounts() async {
+    final db = await database;
+    final rows = await db.rawQuery(
+      'SELECT categoryId, COUNT(*) AS n FROM category_notes GROUP BY categoryId',
+    );
+    return {for (final r in rows) r['categoryId'] as String: r['n'] as int};
+  }
+
+  Future<void> saveNote(CategoryNote note) async {
+    final db = await database;
+    await db.insert(
+      'category_notes',
+      note.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> deleteNote(String id) async {
+    final db = await database;
+    await db.delete('category_notes', where: 'id = ?', whereArgs: [id]);
   }
 
   // ---------- Blocks ----------

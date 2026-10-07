@@ -13,11 +13,17 @@ class CategoryEditorTile extends StatelessWidget {
   /// When set, a Delete button is shown (Settings only).
   final VoidCallback? onDelete;
 
+  /// When [onNotes] is set, a Notes row opens the category's notes.
+  final int noteCount;
+  final VoidCallback? onNotes;
+
   const CategoryEditorTile({
     super.key,
     required this.category,
     required this.onChanged,
     this.onDelete,
+    this.noteCount = 0,
+    this.onNotes,
   });
 
   @override
@@ -78,6 +84,20 @@ class CategoryEditorTile extends StatelessWidget {
           onChangeEnd: (value) =>
               onChanged(category.copyWith(blockMinutes: value.round())),
         ),
+        if (onNotes != null)
+          ListTile(
+            leading: const Icon(Icons.sticky_note_2_outlined),
+            title: const Text('Notes'),
+            subtitle: Text(
+              noteCount == 0
+                  ? 'None'
+                  : noteCount == 1
+                  ? '1 note'
+                  : '$noteCount notes',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: onNotes,
+          ),
         if (onDelete != null)
           Align(
             alignment: Alignment.centerRight,
