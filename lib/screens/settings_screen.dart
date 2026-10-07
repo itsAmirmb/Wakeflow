@@ -10,6 +10,7 @@ import '../services/notification_service.dart';
 import '../services/theme_controller.dart';
 import '../widgets/category_editor.dart';
 import '../widgets/commitment_editor.dart';
+import 'schedule_screen.dart';
 import '../services/day_key.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -422,10 +423,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           _SectionHeader(
             'Fixed commitments',
-            trailing: IconButton(
-              tooltip: 'Add commitment',
-              onPressed: () => _editCommitment(null),
-              icon: const Icon(Icons.add),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: 'Weekly schedule',
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const ScheduleScreen(),
+                    ),
+                  ),
+                  icon: const Icon(Icons.calendar_view_week_outlined),
+                ),
+                IconButton(
+                  tooltip: 'Add commitment',
+                  onPressed: () => _editCommitment(null),
+                  icon: const Icon(Icons.add),
+                ),
+              ],
             ),
           ),
           Builder(

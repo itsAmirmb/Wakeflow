@@ -7,6 +7,7 @@ import 'today_screen.dart';
 import 'settings_screen.dart';
 import 'stats_screen.dart';
 import 'rewards_screen.dart';
+import 'schedule_screen.dart';
 import '../models/day_mode.dart';
 import '../models/block.dart';
 import '../models/category.dart';
@@ -341,7 +342,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
 
     return Scaffold(
-      appBar: AppBar(title: Text(title)),
+      appBar: AppBar(
+        title: Text(title),
+        actions: [
+          IconButton(
+            tooltip: 'Weekly schedule',
+            icon: const Icon(Icons.calendar_view_week_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const ScheduleScreen()),
+            ),
+          ),
+        ],
+      ),
       body: AnimatedSwitcher(
         duration: const Duration(milliseconds: 200),
         child: KeyedSubtree(key: ValueKey(_tabIndex), child: body),

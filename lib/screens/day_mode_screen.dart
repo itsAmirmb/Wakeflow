@@ -7,6 +7,7 @@ import '../models/commitment.dart';
 import '../models/routine_target.dart';
 import '../widgets/category_editor.dart';
 import '../widgets/commitment_editor.dart';
+import '../widgets/weekly_schedule.dart';
 import '../services/routine_engine.dart';
 import '../services/database_service.dart';
 import '../services/active_day.dart';
@@ -37,7 +38,9 @@ class _DayModeScreenState extends State<DayModeScreen> {
   int _bufferMinutes = 10;
   int _longBreakMinutes = 30;
   // Fixed events of the day being planned; blocks are scheduled around them.
-  List<Commitment> _commitments = const [];
+  // Every commitment, for the weekly table (the planner re-reads the day's
+  // own commitments when generating).
+  List<Commitment> _allCommitments = const [];
   String? _planDay;
 
   @override
@@ -50,10 +53,10 @@ class _DayModeScreenState extends State<DayModeScreen> {
     final categories = await DatabaseService.instance.getCategories();
     final settings = await DatabaseService.instance.getSettings();
     var planDay = dayKey(widget.wakeTime);
-    var commitments = <Commitment>[];
+    var allCommitments = <Commitment>[];
     try {
       planDay = await ActiveDay.resolve(DatabaseService.instance, widget.wakeTime);
-      commitments = await DatabaseService.instance.getCommitmentsForDay(planDay);
+      allCommitments = await DatabaseService.instance.getCommitments();
     } catch (_) {
       // Planning still works without them.
     }
@@ -63,7 +66,7 @@ class _DayModeScreenState extends State<DayModeScreen> {
       _bufferMinutes = settings.bufferMinutes;
       _longBreakMinutes = settings.longBreakMinutes;
       _planDay = planDay;
-      _commitments = commitments;
+      _allCommitments = allCommitments;
     });
   }
 
@@ -78,8 +81,8 @@ class _DayModeScreenState extends State<DayModeScreen> {
     if (saved == null || !mounted) return;
     try {
       await DatabaseService.instance.saveCommitment(saved);
-      final commitments = await DatabaseService.instance.getCommitmentsForDay(day);
-      if (mounted) setState(() => _commitments = commitments);
+      final all = await DatabaseService.instance.getCommitments();
+      if (mounted) setState(() => _allCommitments = all);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -245,6 +248,60 @@ class _DayModeScreenState extends State<DayModeScreen> {
     Navigator.pop(context, true);
   }
 
+  /// Weekly table of fixed commitments (display only) plus the reorder hint.
+  Widget _buildScheduleHeader(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final planDate = DateTime.tryParse(_planDay ?? '') ?? widget.wakeTime;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 4, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Schedule',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    color: scheme.primary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Add a commitment for today',
+                icon: const Icon(Icons.add),
+                onPressed: _addCommitment,
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: WeeklyScheduleView(
+            commitments: _allCommitments,
+            weekOf: planDate,
+            highlightWeekday: planDate.weekday,
+            compact: true,
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Divider(height: 1),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Text(
+            'Drag to reorder · the order is the order of your blocks.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final categories = _categories;
@@ -276,40 +333,13 @@ class _DayModeScreenState extends State<DayModeScreen> {
                     ],
                   ),
                 ),
-                const Divider(),
-                ListTile(
-                  dense: true,
-                  leading: const Icon(Icons.event_busy_outlined),
-                  title: const Text('Commitments today'),
-                  subtitle: Text(
-                    _commitments.isEmpty
-                        ? 'None. Blocks are planned around fixed events.'
-                        : [
-                            for (final c in _commitments)
-                              '${c.title} ${Commitment.hm(c.startMinutes)}–${Commitment.hm(c.endMinutes)}',
-                          ].join('\n'),
-                  ),
-                  trailing: IconButton(
-                    tooltip: 'Add a commitment for today',
-                    icon: const Icon(Icons.add),
-                    onPressed: _addCommitment,
-                  ),
-                ),
-                const Divider(),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Text(
-                    'Drag to reorder · the order is the order of your blocks. '
-                    'Changes are saved as your category settings.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
                 Expanded(
                   child: ReorderableListView.builder(
                     buildDefaultDragHandles: false,
                     padding: const EdgeInsets.only(top: 8, bottom: 8),
+                    // The weekly table scrolls with the categories, so the
+                    // list keeps its room on small screens.
+                    header: _buildScheduleHeader(context),
                     itemCount: categories.length,
                     onReorder: _reorder,
                     itemBuilder: (context, index) {
