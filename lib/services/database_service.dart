@@ -495,6 +495,33 @@ class DatabaseService {
     return rows.map(Block.fromMap).toList();
   }
 
+  /// Days that have a routine, newest first, one page at a time.
+  Future<List<String>> getBlockDaysPage({int limit = 30, int offset = 0}) async {
+    final db = await database;
+    final rows = await db.rawQuery(
+      'SELECT DISTINCT day FROM blocks ORDER BY day DESC LIMIT ? OFFSET ?',
+      [limit, offset],
+    );
+    return [for (final row in rows) row['day'] as String];
+  }
+
+  /// Blocks of several days in one query, grouped by day.
+  Future<Map<String, List<Block>>> getBlocksForDays(List<String> days) async {
+    if (days.isEmpty) return {};
+    final db = await database;
+    final rows = await db.query(
+      'blocks',
+      where: 'day IN (${List.filled(days.length, '?').join(',')})',
+      whereArgs: days,
+      orderBy: 'plannedStart ASC',
+    );
+    final byDay = <String, List<Block>>{};
+    for (final row in rows) {
+      byDay.putIfAbsent(row['day'] as String, () => []).add(Block.fromMap(row));
+    }
+    return byDay;
+  }
+
   // ---------- Credits ----------
 
   /// Credits the real timer time of [blocks] (idempotent: a block's earn row

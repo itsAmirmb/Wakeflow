@@ -3,6 +3,8 @@ import '../services/stats_service.dart';
 import '../services/active_day.dart';
 import '../services/database_service.dart';
 import '../widgets/empty_state.dart';
+import '../widgets/stat_cards.dart';
+import 'history_screen.dart';
 
 class StatsScreen extends StatefulWidget {
   const StatsScreen({super.key});
@@ -22,7 +24,7 @@ class _StatsScreenState extends State<StatsScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _load();
   }
 
@@ -65,6 +67,7 @@ class _StatsScreenState extends State<StatsScreen>
           tabs: const [
             Tab(text: 'Today'),
             Tab(text: 'This Week'),
+            Tab(text: 'History'),
           ],
         ),
         Expanded(
@@ -73,6 +76,7 @@ class _StatsScreenState extends State<StatsScreen>
             children: [
               _DailyStatsView(stats: _daily!),
               _WeeklyStatsView(stats: _weekly!),
+              const HistoryView(),
             ],
           ),
         ),
@@ -98,7 +102,7 @@ class _DailyStatsView extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        _SummaryRow(
+        SummaryRow(
           completedMinutes: stats.completedMinutes,
           plannedMinutes: stats.plannedMinutes,
           completedBlocks: stats.completedBlocks,
@@ -106,7 +110,7 @@ class _DailyStatsView extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         for (final stat in stats.categoryStats)
-          if (stat.plannedMinutes > 0) _CategoryStatCard(stat: stat),
+          if (stat.plannedMinutes > 0) CategoryStatCard(stat: stat),
       ],
     );
   }
@@ -134,40 +138,8 @@ class _WeeklyStatsView extends StatelessWidget {
         _WeekOverviewCard(stats: stats),
         const SizedBox(height: 16),
         for (final stat in stats.categoryStats)
-          if (stat.plannedMinutes > 0) _CategoryStatCard(stat: stat),
+          if (stat.plannedMinutes > 0) CategoryStatCard(stat: stat),
       ],
-    );
-  }
-}
-
-class _SummaryRow extends StatelessWidget {
-  final int completedMinutes;
-  final int plannedMinutes;
-  final int completedBlocks;
-  final int skippedBlocks;
-
-  const _SummaryRow({
-    required this.completedMinutes,
-    required this.plannedMinutes,
-    required this.completedBlocks,
-    required this.skippedBlocks,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _StatColumn(label: 'Completed', value: _formatMinutes(completedMinutes)),
-            _StatColumn(label: 'Planned', value: _formatMinutes(plannedMinutes)),
-            _StatColumn(label: 'Blocks done', value: '$completedBlocks'),
-            _StatColumn(label: 'Skipped', value: '$skippedBlocks'),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -188,15 +160,15 @@ class _WeekOverviewCard extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _StatColumn(
+                StatColumn(
                   label: 'Completed',
-                  value: _formatMinutes(stats.completedMinutes),
+                  value: formatMinutes(stats.completedMinutes),
                 ),
-                _StatColumn(
+                StatColumn(
                   label: 'Planned',
-                  value: _formatMinutes(stats.plannedMinutes),
+                  value: formatMinutes(stats.plannedMinutes),
                 ),
-                _StatColumn(
+                StatColumn(
                   label: 'Completion',
                   value: '${(stats.completionRatio * 100).round()}%',
                 ),
@@ -209,90 +181,4 @@ class _WeekOverviewCard extends StatelessWidget {
       ),
     );
   }
-}
-
-class _StatColumn extends StatelessWidget {
-  final String label;
-  final String value;
-
-  const _StatColumn({required this.label, required this.value});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _CategoryStatCard extends StatelessWidget {
-  final CategoryStat stat;
-
-  const _CategoryStatCard({required this.stat});
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 6),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text(stat.category.icon, style: const TextStyle(fontSize: 20)),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    stat.category.name,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                ),
-                Text(
-                  '${_formatMinutes(stat.completedMinutes)} / ${_formatMinutes(stat.plannedMinutes)}',
-                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: LinearProgressIndicator(
-                value: stat.completionRatio.clamp(0, 1),
-                minHeight: 8,
-              ),
-            ),
-            if (stat.skippedBlocks > 0) ...[
-              const SizedBox(height: 4),
-              Text(
-                '${stat.skippedBlocks} skipped',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-String _formatMinutes(int minutes) {
-  final h = minutes ~/ 60;
-  final m = minutes % 60;
-  if (h == 0) return '${m}m';
-  if (m == 0) return '${h}h';
-  return '${h}h ${m}m';
 }
