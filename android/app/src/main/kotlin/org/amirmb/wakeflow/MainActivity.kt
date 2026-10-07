@@ -5,6 +5,9 @@ import android.content.Intent
 import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.net.Uri
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.io.InputStream
 import android.os.Handler
 import android.os.Looper
 import io.flutter.embedding.android.FlutterActivity
@@ -16,6 +19,8 @@ class MainActivity : FlutterActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private val autoStop = Runnable { stopAlarm() }
     private var pendingPick: MethodChannel.Result? = null
+    private var pendingFile: MethodChannel.Result? = null
+    private var pendingExportText: String? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -31,6 +36,18 @@ class MainActivity : FlutterActivity() {
                     }
                     "pickAlarm" -> pickAlarm(call.argument<String>("current"), result)
                     "stop" -> { stopAlarm(); result.success(null) }
+                    else -> result.notImplemented()
+                }
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "org.amirmb.wakeflow/files")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "saveText" -> saveText(
+                        call.argument<String>("name") ?: "backup.json",
+                        call.argument<String>("text") ?: "",
+                        result,
+                    )
+                    "pickText" -> pickText(result)
                     else -> result.notImplemented()
                 }
             }
@@ -98,8 +115,93 @@ class MainActivity : FlutterActivity() {
         startActivityForResult(intent, REQUEST_PICK_ALARM)
     }
 
+    /// Save dialog (Storage Access Framework): no storage permission needed.
+    private fun saveText(name: String, text: String, result: MethodChannel.Result) {
+        if (pendingFile != null) {
+            result.error("busy", "A file dialog is already open", null)
+            return
+        }
+        pendingFile = result
+        pendingExportText = text
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+            putExtra(Intent.EXTRA_TITLE, name)
+        }
+        startActivityForResult(intent, REQUEST_SAVE_FILE)
+    }
+
+    private fun pickText(result: MethodChannel.Result) {
+        if (pendingFile != null) {
+            result.error("busy", "A file dialog is already open", null)
+            return
+        }
+        pendingFile = result
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(
+                Intent.EXTRA_MIME_TYPES,
+                arrayOf("application/json", "text/plain", "application/octet-stream"),
+            )
+        }
+        startActivityForResult(intent, REQUEST_PICK_FILE)
+    }
+
+    private fun handleFileResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        val result = pendingFile ?: return
+        val text = pendingExportText
+        pendingFile = null
+        pendingExportText = null
+        val uri: Uri? = if (resultCode == RESULT_OK) data?.data else null
+        if (uri == null) {
+            result.success(if (requestCode == REQUEST_SAVE_FILE) false else null)
+            return
+        }
+        // File I/O off the main thread; the result goes back on it.
+        Thread {
+            try {
+                if (requestCode == REQUEST_SAVE_FILE) {
+                    val output = contentResolver.openOutputStream(uri, "wt")
+                        ?: throw IOException("Could not open the file for writing")
+                    output.use { it.write((text ?: "").toByteArray(Charsets.UTF_8)) }
+                    runOnUiThread { result.success(true) }
+                } else {
+                    val input = contentResolver.openInputStream(uri)
+                        ?: throw IOException("Could not open the file")
+                    val bytes = input.use { readLimited(it) }
+                    runOnUiThread { result.success(String(bytes, Charsets.UTF_8)) }
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    result.error("file_failed", e.message ?: "File access failed", null)
+                }
+            }
+        }.start()
+    }
+
+    private fun readLimited(input: InputStream): ByteArray {
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        var total = 0
+        while (true) {
+            val n = input.read(buffer)
+            if (n < 0) break
+            total += n
+            if (total > MAX_IMPORT_BYTES) {
+                throw IOException("The file is too large to be a WakeFlow backup")
+            }
+            out.write(buffer, 0, n)
+        }
+        return out.toByteArray()
+    }
+
     @Suppress("DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == REQUEST_SAVE_FILE || requestCode == REQUEST_PICK_FILE) {
+            handleFileResult(requestCode, resultCode, data)
+            return
+        }
         if (requestCode != REQUEST_PICK_ALARM) {
             super.onActivityResult(requestCode, resultCode, data)
             return
@@ -123,6 +225,9 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val REQUEST_PICK_ALARM = 4711
+        private const val REQUEST_SAVE_FILE = 4712
+        private const val REQUEST_PICK_FILE = 4713
+        private const val MAX_IMPORT_BYTES = 20 * 1024 * 1024
     }
 
     private fun stopAlarm() {

@@ -498,6 +498,13 @@ class NotificationService {
     await _plugin.cancel(_breakAlarmId);
   });
 
+  /// Cancels every scheduled and shown notification (used after a restore,
+  /// when the old schedule no longer matches the data).
+  Future<void> cancelAll() => _serial(() async {
+    await init();
+    await _plugin.cancelAll();
+  });
+
   /// Next occurrence only, renewed on launch or wake-time edit. No UTC repeat:
   /// a device IANA zone/native timezone integration is needed for true daily
   /// local wall-clock scheduling while closed, including DST/travel handling.

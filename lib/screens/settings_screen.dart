@@ -13,6 +13,7 @@ import '../services/theme_controller.dart';
 import '../widgets/category_editor.dart';
 import '../widgets/category_timeline_bar.dart';
 import '../widgets/commitment_editor.dart';
+import 'backup_section.dart';
 import 'category_notes_screen.dart';
 import 'schedule_screen.dart';
 import '../services/day_key.dart';
@@ -733,6 +734,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onNotes: () => _openNotes(category),
             ),
           ),
+          const BackupSection(),
           const SizedBox(height: 24),
         ],
       ),

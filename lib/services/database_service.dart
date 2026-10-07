@@ -37,13 +37,28 @@ class DatabaseService {
     return _db!;
   }
 
+  /// Bump with every schema change (also written into backups).
+  static const int schemaVersion = 18;
+
+  /// Every table that holds user data, in a safe restore order.
+  static const List<String> backupTables = [
+    'settings',
+    'categories',
+    'category_notes',
+    'commitments',
+    'day_meta',
+    'blocks',
+    'checkpoints',
+    'credit_ledger',
+  ];
+
   Future<Database> _open() async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, 'wakeflow.db');
 
     return openDatabase(
       path,
-      version: 18,
+      version: schemaVersion,
       onCreate: createSchema,
       onUpgrade: upgradeSchema,
     );
@@ -469,6 +484,46 @@ class DatabaseService {
     await db.transaction((txn) async {
       await txn.delete('category_notes', where: 'categoryId = ?', whereArgs: [id]);
       await txn.delete('categories', where: 'id = ?', whereArgs: [id]);
+    });
+  }
+
+  // ---------- Backup / restore ----------
+
+  Future<Map<String, List<Map<String, Object?>>>> exportAllTables() async {
+    final db = await database;
+    final tables = <String, List<Map<String, Object?>>>{};
+    for (final table in backupTables) {
+      tables[table] = await db.query(table);
+    }
+    return tables;
+  }
+
+  /// Replaces the content of every backup table, atomically: if anything
+  /// fails the transaction rolls back and the current data is untouched.
+  /// Columns the current schema does not have are ignored, columns the
+  /// backup lacks fall back to their defaults (older backups).
+  Future<void> replaceAllTables(
+    Map<String, List<Map<String, Object?>>> tables,
+  ) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final table in backupTables.reversed) {
+        await txn.delete(table);
+      }
+      for (final table in backupTables) {
+        final rows = tables[table] ?? const <Map<String, Object?>>[];
+        if (rows.isEmpty) continue;
+        final info = await txn.rawQuery('PRAGMA table_info($table)');
+        final columns = {for (final c in info) c['name'] as String};
+        final batch = txn.batch();
+        for (final row in rows) {
+          batch.insert(table, {
+            for (final entry in row.entries)
+              if (columns.contains(entry.key)) entry.key: entry.value,
+          });
+        }
+        await batch.commit(noResult: true);
+      }
     });
   }
 
