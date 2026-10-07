@@ -90,9 +90,10 @@ class WeeklyScheduleView extends StatelessWidget {
     if (endHour > 24) endHour = 24;
     final hours = (endHour - startHour).clamp(1, 24);
 
-    final hourWidth = compact ? 48.0 : 72.0;
-    final laneHeight = compact ? 26.0 : 40.0;
-    final timelineWidth = hours * hourWidth;
+    // Wider hours and taller lanes so titles can wrap onto two lines; when
+    // the view has spare width the hours stretch to fill it (no empty gap).
+    final baseHourWidth = compact ? 64.0 : 80.0;
+    final laneHeight = compact ? 38.0 : 44.0;
     double rowHeight(_DayData d) {
       final lanes = d.lanes.isEmpty ? 1 : d.lanes.reduce((a, b) => a > b ? a : b) + 1;
       return lanes * laneHeight + 8;
@@ -101,7 +102,14 @@ class WeeklyScheduleView extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final lineColor = scheme.outlineVariant;
 
-    return Row(
+    return LayoutBuilder(builder: (context, constraints) {
+      final available = constraints.maxWidth - _labelWidth;
+      final hourWidth =
+          available.isFinite && available / hours > baseHourWidth
+          ? available / hours
+          : baseHourWidth;
+      final timelineWidth = hours * hourWidth;
+      return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
@@ -177,6 +185,7 @@ class WeeklyScheduleView extends StatelessWidget {
         ),
       ],
     );
+    });
   }
 }
 
@@ -287,9 +296,9 @@ class _DayRow extends StatelessWidget {
             children: [
               Text(
                 c.title,
-                maxLines: 1,
+                maxLines: compact ? 2 : 1,
                 overflow: TextOverflow.ellipsis,
-                style: style?.copyWith(fontWeight: FontWeight.w600),
+                style: style?.copyWith(fontWeight: FontWeight.w600, height: 1.1),
               ),
               if (!compact)
                 Text(

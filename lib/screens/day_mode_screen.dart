@@ -6,6 +6,7 @@ import '../models/category.dart';
 import '../models/commitment.dart';
 import '../models/routine_target.dart';
 import '../widgets/category_editor.dart';
+import '../widgets/category_timeline_bar.dart';
 import '../widgets/commitment_editor.dart';
 import '../widgets/weekly_schedule.dart';
 import '../services/routine_engine.dart';
@@ -290,9 +291,31 @@ class _DayModeScreenState extends State<DayModeScreen> {
           child: Divider(height: 1),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
           child: Text(
-            'Drag to reorder · the order is the order of your blocks.',
+            'Time split',
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              color: scheme.primary,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: CategoryTimelineBar(
+            key: const ValueKey('daymode-timeline'),
+            categories: _categories ?? const [],
+            onChanged: (updated) {
+              setState(() => _categories = List<Category>.of(updated));
+              _saveDraft();
+            },
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: Text(
+            'Drag the lines to change each share · drag the cards below to '
+            'reorder (the order is the order of your blocks).',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: scheme.onSurfaceVariant,
             ),

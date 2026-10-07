@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import '../models/category.dart';
 
 /// One expandable row per category: enable toggle plus sliders for
-/// share of the day, minimum/maximum per day and the fixed block size. Shared by the
+/// minimum/maximum per day and the fixed block size. The share of the day
+/// is set on the timeline bar (see CategoryTimelineBar). Shared by the
 /// Settings tab and the Start Day screen so both edit categories the same way.
 class CategoryEditorTile extends StatelessWidget {
   final Category category;
@@ -24,25 +25,12 @@ class CategoryEditorTile extends StatelessWidget {
     return ExpansionTile(
       leading: Text(category.icon, style: const TextStyle(fontSize: 22)),
       title: Text(category.name),
-      subtitle: Text(
-        '${(category.percentage * 100).round()}% · '
-        '${category.blockMinutes}m blocks',
-      ),
+      subtitle: Text('${category.blockMinutes}m blocks'),
       trailing: Switch(
         value: category.enabled,
         onChanged: (value) => onChanged(category.copyWith(enabled: value)),
       ),
       children: [
-        LabeledSlider(
-          label: 'Share of the day',
-          value: category.percentage * 100,
-          min: 0,
-          max: 100,
-          divisions: 20,
-          formatValue: (v) => '${v.round()}%',
-          onChangeEnd: (value) =>
-              onChanged(category.copyWith(percentage: value / 100)),
-        ),
         LabeledSlider(
           label: 'Minimum per day',
           value: category.minimumMinutes.toDouble(),

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/alert_style.dart';
@@ -9,6 +11,7 @@ import '../services/database_service.dart';
 import '../services/notification_service.dart';
 import '../services/theme_controller.dart';
 import '../widgets/category_editor.dart';
+import '../widgets/category_timeline_bar.dart';
 import '../widgets/commitment_editor.dart';
 import 'schedule_screen.dart';
 import '../services/day_key.dart';
@@ -156,6 +159,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
       });
     } catch (_) {
       _showError('Could not save category. Please try again.');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  /// Persists a new time split from the timeline bar (only changed rows).
+  Future<void> _saveSplit(List<Category> updated) async {
+    final current = _categories;
+    if (!mounted || _saving || current == null) return;
+    final before = {for (final c in current) c.id: c.percentage};
+    final changed = updated.where((c) => before[c.id] != c.percentage).toList();
+    if (changed.isEmpty) return;
+    setState(() {
+      _saving = true;
+      _categories = List<Category>.of(updated);
+    });
+    try {
+      final persist =
+          widget.persistCategory ?? DatabaseService.instance.updateCategory;
+      for (final category in changed) {
+        await persist(category);
+      }
+    } catch (_) {
+      _showError('Could not save the time split. Please try again.');
+      unawaited(_load());
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -665,6 +693,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               tooltip: 'Add category',
               onPressed: _addCategory,
               icon: const Icon(Icons.add),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: CategoryTimelineBar(
+              key: const ValueKey('settings-timeline'),
+              categories: categories,
+              onChanged: _saveSplit,
             ),
           ),
           ...categories.map(

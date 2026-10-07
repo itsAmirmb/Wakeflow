@@ -961,75 +961,61 @@ class _CurrentBlockPanel extends StatelessWidget {
             children: [
               if (block.status == BlockStatus.pending)
                 Expanded(
-                  child: Semantics(
-                    button: true,
-                    label: 'Start ${block.title}',
-                    child: ElevatedButton.icon(
-                      onPressed: onStart,
-                      icon: const Icon(Icons.play_arrow),
-                      label: const Text('START'),
-                    ),
+                  child: _ActionButton(
+                    semanticsLabel: 'Start ${block.title}',
+                    label: 'START',
+                    icon: Icons.play_arrow,
+                    filled: true,
+                    onPressed: onStart,
                   ),
                 ),
               if (block.status == BlockStatus.active) ...[
                 Expanded(
-                  child: Semantics(
-                    button: true,
-                    label: 'Pause ${block.title}',
-                    child: OutlinedButton.icon(
-                      onPressed: onPause,
-                      icon: const Icon(Icons.pause),
-                      label: const Text('PAUSE'),
-                    ),
+                  child: _ActionButton(
+                    semanticsLabel: 'Pause ${block.title}',
+                    label: 'PAUSE',
+                    icon: Icons.pause,
+                    onPressed: onPause,
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Semantics(
-                    button: true,
-                    label: 'Mark ${block.title} as complete',
-                    child: ElevatedButton.icon(
-                      onPressed: canComplete ? onComplete : null,
-                      icon: const Icon(Icons.check),
-                      label: const Text('DONE'),
-                    ),
+                  child: _ActionButton(
+                    semanticsLabel: 'Mark ${block.title} as complete',
+                    label: 'DONE',
+                    icon: Icons.check,
+                    filled: true,
+                    onPressed: canComplete ? onComplete : null,
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Semantics(
-                    button: true,
-                    label: 'Skip ${block.title}',
-                    child: OutlinedButton.icon(
-                      onPressed: onSkip,
-                      icon: const Icon(Icons.skip_next),
-                      label: const Text('SKIP'),
-                    ),
+                  child: _ActionButton(
+                    semanticsLabel: 'Skip ${block.title}',
+                    label: 'SKIP',
+                    icon: Icons.skip_next,
+                    onPressed: onSkip,
                   ),
                 ),
               ],
               if (block.status == BlockStatus.paused) ...[
                 Expanded(
-                  child: Semantics(
-                    button: true,
-                    label: 'Resume ${block.title}',
-                    child: ElevatedButton.icon(
-                      onPressed: onResume,
-                      icon: const Icon(Icons.play_arrow),
-                      label: const Text('RESUME'),
-                    ),
+                  child: _ActionButton(
+                    semanticsLabel: 'Resume ${block.title}',
+                    label: 'RESUME',
+                    icon: Icons.play_arrow,
+                    filled: true,
+                    onPressed: onResume,
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Semantics(
-                    button: true,
-                    label: 'Mark ${block.title} as complete',
-                    child: ElevatedButton.icon(
-                      onPressed: canComplete ? onComplete : null,
-                      icon: const Icon(Icons.check),
-                      label: const Text('DONE'),
-                    ),
+                  child: _ActionButton(
+                    semanticsLabel: 'Mark ${block.title} as complete',
+                    label: 'DONE',
+                    icon: Icons.check,
+                    filled: true,
+                    onPressed: canComplete ? onComplete : null,
                   ),
                 ),
               ],
@@ -1126,7 +1112,7 @@ class _BreakPanel extends StatelessWidget {
                   child: FilledButton.icon(
                     onPressed: onStartNext,
                     icon: const Icon(Icons.play_arrow),
-                    label: Text(over ? 'START NEXT' : 'START NOW'),
+                    label: _OneLine(over ? 'START NEXT' : 'START NOW'),
                   ),
                 ),
               ),
@@ -1136,7 +1122,7 @@ class _BreakPanel extends StatelessWidget {
                   child: OutlinedButton.icon(
                     onPressed: onStopAlarm,
                     icon: const Icon(Icons.alarm_off),
-                    label: const Text('STOP ALARM'),
+                    label: const _OneLine('STOP ALARM'),
                   ),
                 ),
               ],
@@ -1171,6 +1157,67 @@ class _CommitmentTile extends StatelessWidget {
           'Fixed · ${Commitment.hm(commitment.startMinutes)}–${Commitment.hm(commitment.endMinutes)}',
         ),
       ),
+    );
+  }
+}
+
+/// Button label that always stays on one line: it shrinks to fit instead of
+/// wrapping, so a row of buttons never grows taller on narrow screens.
+class _OneLine extends StatelessWidget {
+  final String text;
+
+  const _OneLine(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Text(text, maxLines: 1, softWrap: false),
+    );
+  }
+}
+
+/// One action of the timer panel: icon + single-line label, equal width via
+/// the surrounding Expanded, with tight horizontal padding.
+class _ActionButton extends StatelessWidget {
+  final String semanticsLabel;
+  final String label;
+  final IconData icon;
+  final bool filled;
+  final VoidCallback? onPressed;
+
+  const _ActionButton({
+    required this.semanticsLabel,
+    required this.label,
+    required this.icon,
+    required this.onPressed,
+    this.filled = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final style = ButtonStyle(
+      padding: const WidgetStatePropertyAll(
+        EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+      ),
+    );
+    final iconWidget = Icon(icon, size: 18);
+    return Semantics(
+      button: true,
+      label: semanticsLabel,
+      child: filled
+          ? ElevatedButton.icon(
+              onPressed: onPressed,
+              style: style,
+              icon: iconWidget,
+              label: _OneLine(label),
+            )
+          : OutlinedButton.icon(
+              onPressed: onPressed,
+              style: style,
+              icon: iconWidget,
+              label: _OneLine(label),
+            ),
     );
   }
 }
