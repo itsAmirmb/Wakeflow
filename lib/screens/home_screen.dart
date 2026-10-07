@@ -463,13 +463,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 label: 'Start Day',
                 child: ElevatedButton(
                   onPressed: () async {
-                    await Navigator.push(
+                    final generated = await Navigator.push<bool>(
                       context,
                       MaterialPageRoute(
                         builder: (context) => const WakeScreen(),
                       ),
                     );
-                    if (mounted) _checkForTodayRoutine();
+                    if (!mounted) return;
+                    await _checkForTodayRoutine();
+                    // A routine was just planned: open it from Home, so Back
+                    // from Today returns here and not to the planning steps.
+                    if (generated == true && mounted) {
+                      await _openTodayScreen(context);
+                    }
                   },
                   style: ElevatedButton.styleFrom(
                     minimumSize: const Size(200, 56),

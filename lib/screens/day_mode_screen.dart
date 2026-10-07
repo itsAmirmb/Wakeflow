@@ -12,7 +12,6 @@ import '../services/database_service.dart';
 import '../services/active_day.dart';
 import '../services/day_key.dart';
 import '../services/notification_service.dart';
-import 'today_screen.dart';
 
 class DayModeScreen extends StatefulWidget {
   final DayMode dayMode;
@@ -31,9 +30,10 @@ class DayModeScreen extends StatefulWidget {
 }
 
 class _DayModeScreenState extends State<DayModeScreen> {
-  // Editable draft, in plan order. Changes are saved when the routine is
-  // generated (not while editing), so backing out discards them.
+  // Editable draft, in plan order. Every change is saved as it is made, so
+  // the next day starts from the last settings used.
   List<Category>? _categories;
+  Future<void> _pendingSave = Future<void>.value();
   int _bufferMinutes = 10;
   int _longBreakMinutes = 30;
   // Fixed events of the day being planned; blocks are scheduled around them.
@@ -89,8 +89,24 @@ class _DayModeScreenState extends State<DayModeScreen> {
     }
   }
 
+  /// Saves the draft (with its order as priority). Writes are chained so they
+  /// land in edit order; a failure is retried when the routine is generated.
+  void _saveDraft() {
+    final draft = _categories;
+    if (draft == null) return;
+    final ordered = [
+      for (var i = 0; i < draft.length; i++) draft[i].copyWith(priority: i + 1),
+    ];
+    _pendingSave = _pendingSave.then((_) async {
+      try {
+        await DatabaseService.instance.saveCategories(ordered);
+      } catch (_) {}
+    });
+  }
+
   void _updateCategory(int index, Category category) {
     setState(() => _categories![index] = category);
+    _saveDraft();
   }
 
   void _reorder(int oldIndex, int newIndex) {
@@ -99,6 +115,7 @@ class _DayModeScreenState extends State<DayModeScreen> {
       final moved = _categories!.removeAt(oldIndex);
       _categories!.insert(newIndex, moved);
     });
+    _saveDraft();
   }
 
   Future<void> _generateRoutine(BuildContext context) async {
@@ -110,6 +127,7 @@ class _DayModeScreenState extends State<DayModeScreen> {
       for (var i = 0; i < draft.length; i++) draft[i].copyWith(priority: i + 1),
     ];
     if (!categories.any((c) => c.enabled)) return;
+    await _pendingSave;
     try {
       await DatabaseService.instance.saveCategories(categories);
     } catch (_) {
@@ -222,17 +240,9 @@ class _DayModeScreenState extends State<DayModeScreen> {
     // Today refreshes fixed checkpoint reminders from the persisted metadata.
 
     if (!context.mounted) return;
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => TodayScreen(
-          dayMode: widget.dayMode,
-          blocks: placedBlocks,
-          day: today,
-          categories: categories,
-        ),
-      ),
-    );
+    // Hand control back to Home (through the Wake screen), which opens
+    // Today. Back from Today then lands on Home, not on this planning step.
+    Navigator.pop(context, true);
   }
 
   @override

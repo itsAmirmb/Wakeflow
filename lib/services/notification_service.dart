@@ -37,7 +37,6 @@ class NotificationService {
   static const _channelId = 'wakeflow_blocks_v3';
   static const _channelName = 'Routine Blocks';
   static const _wakeReminderId = 0;
-  static const _wakeSnoozeId = 1;
   static const _rangeSize = 0x3fffffff;
   // One break at a time, so one fixed slot (start-range candidates make a
   // clash a one-in-a-billion event; pending IDs are probed anyway).
@@ -512,22 +511,6 @@ class NotificationService {
           when: nextLocalWallClockOccurrence(hour, minute, _now()),
         );
       });
-
-  /// A separate fixed ID replaces the previous snooze, not the wake reminder.
-  Future<void> scheduleWakeSnooze() => _serial(() async {
-    await init();
-    await _schedule(
-      id: _wakeSnoozeId,
-      title: 'Ready to start your day?',
-      body: 'Tap to plan your day',
-      when: _now().add(const Duration(minutes: 30)),
-    );
-  });
-
-  Future<void> cancelWakeSnooze() => _serial(() async {
-    await init();
-    await _plugin.cancel(_wakeSnoozeId);
-  });
 
   @visibleForTesting
   static DateTime nextLocalWallClockOccurrence(

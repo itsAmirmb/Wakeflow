@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'alert_style.dart';
+import 'routine_target.dart';
 
 /// How the distillation keep-threshold is expressed.
 enum DistillKeepMode { minutes, percent }
@@ -17,6 +18,11 @@ class AppSettings {
   /// Phone alarm chosen for the end of a break (null = bundled default).
   final String? breakAlarmUri;
   final String? breakAlarmTitle;
+
+  /// Last routine target chosen on the Wake screen (prefilled next time).
+  final RoutineTargetMode targetMode;
+  final int targetTimeMinutes; // minutes after midnight
+  final int targetDurationMinutes;
   final int wakeReminderHour;
   final int wakeReminderMinute;
   final String themeMode; // 'system' | 'light' | 'dark'
@@ -39,6 +45,9 @@ class AppSettings {
     this.longBreakMinutes = 30,
     this.breakAlarmUri,
     this.breakAlarmTitle,
+    this.targetMode = RoutineTargetMode.targetTime,
+    this.targetTimeMinutes = 18 * 60 + 30,
+    this.targetDurationMinutes = 8 * 60,
     this.wakeReminderHour = 8,
     this.wakeReminderMinute = 0,
     this.themeMode = 'system',
@@ -58,6 +67,9 @@ class AppSettings {
     String? breakAlarmUri,
     String? breakAlarmTitle,
     bool clearBreakAlarm = false,
+    RoutineTargetMode? targetMode,
+    int? targetTimeMinutes,
+    int? targetDurationMinutes,
     int? wakeReminderHour,
     int? wakeReminderMinute,
     String? themeMode,
@@ -76,6 +88,9 @@ class AppSettings {
       breakAlarmTitle: clearBreakAlarm
           ? null
           : (breakAlarmTitle ?? this.breakAlarmTitle),
+      targetMode: targetMode ?? this.targetMode,
+      targetTimeMinutes: targetTimeMinutes ?? this.targetTimeMinutes,
+      targetDurationMinutes: targetDurationMinutes ?? this.targetDurationMinutes,
       wakeReminderHour: wakeReminderHour ?? this.wakeReminderHour,
       wakeReminderMinute: wakeReminderMinute ?? this.wakeReminderMinute,
       themeMode: themeMode ?? this.themeMode,
@@ -129,6 +144,9 @@ class AppSettings {
       'longBreakMinutes': longBreakMinutes,
       'breakAlarmUri': breakAlarmUri,
       'breakAlarmTitle': breakAlarmTitle,
+      'targetMode': targetMode.name,
+      'targetTimeMinutes': targetTimeMinutes,
+      'targetDurationMinutes': targetDurationMinutes,
       'wakeReminderHour': wakeReminderHour,
       'wakeReminderMinute': wakeReminderMinute,
       'themeMode': themeMode,
@@ -150,6 +168,14 @@ class AppSettings {
       longBreakMinutes: ((map['longBreakMinutes'] as int?) ?? 30).clamp(0, 180),
       breakAlarmUri: map['breakAlarmUri'] as String?,
       breakAlarmTitle: map['breakAlarmTitle'] as String?,
+      targetMode: RoutineTargetMode.values.firstWhere(
+        (m) => m.name == map['targetMode'],
+        orElse: () => RoutineTargetMode.targetTime,
+      ),
+      targetTimeMinutes: ((map['targetTimeMinutes'] as int?) ?? 18 * 60 + 30)
+          .clamp(0, 24 * 60 - 1),
+      targetDurationMinutes: ((map['targetDurationMinutes'] as int?) ?? 8 * 60)
+          .clamp(60, 16 * 60),
       wakeReminderHour: map['wakeReminderHour'] as int,
       wakeReminderMinute: map['wakeReminderMinute'] as int,
       // Older rows (pre-theme-setting) won't have this column — default

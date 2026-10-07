@@ -42,7 +42,7 @@ class DatabaseService {
 
     return openDatabase(
       path,
-      version: 16,
+      version: 17,
       onCreate: createSchema,
       onUpgrade: upgradeSchema,
     );
@@ -193,6 +193,27 @@ class DatabaseService {
         'INTEGER NOT NULL DEFAULT 5',
       );
     }
+    // v16 -> v17: remember the last routine target.
+    if (oldVersion < 17) {
+      await ensureColumn(
+        db,
+        'settings',
+        'targetMode',
+        "TEXT NOT NULL DEFAULT 'targetTime'",
+      );
+      await ensureColumn(
+        db,
+        'settings',
+        'targetTimeMinutes',
+        'INTEGER NOT NULL DEFAULT 1110',
+      );
+      await ensureColumn(
+        db,
+        'settings',
+        'targetDurationMinutes',
+        'INTEGER NOT NULL DEFAULT 480',
+      );
+    }
     // v15 -> v16: user-chosen break-end alarm.
     if (oldVersion < 16) {
       await ensureColumn(db, 'settings', 'breakAlarmUri', 'TEXT');
@@ -338,6 +359,9 @@ class DatabaseService {
         longBreakMinutes INTEGER NOT NULL DEFAULT 30,
         breakAlarmUri TEXT,
         breakAlarmTitle TEXT,
+        targetMode TEXT NOT NULL DEFAULT 'targetTime',
+        targetTimeMinutes INTEGER NOT NULL DEFAULT 1110,
+        targetDurationMinutes INTEGER NOT NULL DEFAULT 480,
         wakeReminderHour INTEGER NOT NULL,
         wakeReminderMinute INTEGER NOT NULL,
         themeMode TEXT NOT NULL DEFAULT 'system',

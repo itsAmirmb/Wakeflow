@@ -1,7 +1,7 @@
 enum RoutineTargetMode { targetTime, targetDuration }
 
-/// How today's usable time is bounded, chosen fresh on the Wake screen
-/// each time (per spec: not a fixed setting, picked every morning).
+/// How today's usable time is bounded, confirmed on the Wake screen each
+/// day (prefilled with the last target used).
 ///
 /// - [targetTime]: routine runs until a specific clock time today
 ///   (e.g. "everything done by 18:30").

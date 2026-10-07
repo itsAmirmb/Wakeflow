@@ -1,15 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/routine_target.dart';
-import '../services/greeting.dart';
+import '../services/database_service.dart';
 import '../services/day_mode_calculator.dart';
-import '../services/notification_service.dart';
+import '../services/greeting.dart';
 import 'day_mode_screen.dart';
 
 class WakeScreen extends StatefulWidget {
-  const WakeScreen({super.key, this.scheduleSnooze});
-
-  final Future<void> Function()? scheduleSnooze;
+  const WakeScreen({super.key});
 
   @override
   State<WakeScreen> createState() => _WakeScreenState();
@@ -19,12 +19,52 @@ class _WakeScreenState extends State<WakeScreen> {
   RoutineTargetMode _mode = RoutineTargetMode.targetTime;
   TimeOfDay _targetTime = const TimeOfDay(hour: 18, minute: 30);
   int _targetDurationMinutes = 8 * 60;
-  bool _scheduling = false;
+  bool _starting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadLastTarget());
+  }
 
   RoutineTarget get _target {
     return _mode == RoutineTargetMode.targetTime
         ? RoutineTarget.time(hour: _targetTime.hour, minute: _targetTime.minute)
         : RoutineTarget.duration(minutes: _targetDurationMinutes);
+  }
+
+  /// Starts from the last target that was used.
+  Future<void> _loadLastTarget() async {
+    try {
+      final settings = await DatabaseService.instance.getSettings();
+      if (!mounted) return;
+      setState(() {
+        _mode = settings.targetMode;
+        _targetTime = TimeOfDay(
+          hour: settings.targetTimeMinutes ~/ 60,
+          minute: settings.targetTimeMinutes % 60,
+        );
+        _targetDurationMinutes = settings.targetDurationMinutes;
+      });
+    } catch (_) {
+      // Defaults are fine; remembering is only a convenience.
+    }
+  }
+
+  Future<void> _saveTarget() async {
+    try {
+      final db = DatabaseService.instance;
+      final current = await db.getSettings();
+      await db.saveSettings(
+        current.copyWith(
+          targetMode: _mode,
+          targetTimeMinutes: _targetTime.hour * 60 + _targetTime.minute,
+          targetDurationMinutes: _targetDurationMinutes,
+        ),
+      );
+    } catch (_) {
+      // Never block starting the day because the choice could not be saved.
+    }
   }
 
   Future<void> _pickTargetTime() async {
@@ -35,46 +75,25 @@ class _WakeScreenState extends State<WakeScreen> {
     if (mounted && picked != null) setState(() => _targetTime = picked);
   }
 
-  void _onYes(BuildContext context) {
+  Future<void> _onYes() async {
+    if (_starting) return;
+    setState(() => _starting = true);
     final wakeTime = DateTime.now();
     final mode = DayModeCalculator.calculate(wakeTime);
+    unawaited(_saveTarget());
+    final target = _target;
 
-    Navigator.push(
+    final generated = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (context) =>
-            DayModeScreen(dayMode: mode, wakeTime: wakeTime, target: _target),
+            DayModeScreen(dayMode: mode, wakeTime: wakeTime, target: target),
       ),
     );
-  }
-
-  Future<void> _onLater() async {
-    if (_scheduling) return;
-    setState(() => _scheduling = true);
-    try {
-      await (widget.scheduleSnooze ??
-          NotificationService.instance.scheduleWakeSnooze)();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Reminder scheduled for 30 minutes later. '
-            'Delivery may be delayed without exact-alarm access.',
-          ),
-        ),
-      );
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Could not schedule reminder. Check notification permissions and try again.',
-          ),
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _scheduling = false);
-    }
+    if (!mounted) return;
+    setState(() => _starting = false);
+    // The routine was generated: pass that on so Home opens Today directly.
+    if (generated == true) Navigator.pop(context, true);
   }
 
   @override
@@ -101,8 +120,8 @@ class _WakeScreenState extends State<WakeScreen> {
                 ),
               ),
               const SizedBox(height: 32),
-              // Target mode: how today's usable time gets bounded.
-              // Chosen fresh each morning, not a fixed setting.
+              // Target mode: how today's usable time gets bounded. The last
+              // choice is remembered and prefilled.
               SegmentedButton<RoutineTargetMode>(
                 segments: const [
                   ButtonSegment(
@@ -149,7 +168,7 @@ class _WakeScreenState extends State<WakeScreen> {
                 ),
               const SizedBox(height: 24),
               ElevatedButton(
-                onPressed: _scheduling ? null : () => _onYes(context),
+                onPressed: _starting ? null : _onYes,
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 40,
@@ -157,20 +176,6 @@ class _WakeScreenState extends State<WakeScreen> {
                   ),
                 ),
                 child: const Text('YES, START', style: TextStyle(fontSize: 18)),
-              ),
-              const SizedBox(height: 16),
-              OutlinedButton(
-                onPressed: _scheduling ? null : _onLater,
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 40,
-                    vertical: 16,
-                  ),
-                ),
-                child: const Text(
-                  '30 MIN LATER',
-                  style: TextStyle(fontSize: 16),
-                ),
               ),
             ],
           ),
