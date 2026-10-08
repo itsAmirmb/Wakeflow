@@ -23,6 +23,9 @@ class AppSettings {
   final RoutineTargetMode targetMode;
   final int targetTimeMinutes; // minutes after midnight
   final int targetDurationMinutes;
+
+  /// Whether a ticked-off note stays ticked on the following days.
+  final bool keepNoteTicksAcrossDays;
   final int wakeReminderHour;
   final int wakeReminderMinute;
   final String themeMode; // 'system' | 'light' | 'dark'
@@ -48,6 +51,7 @@ class AppSettings {
     this.targetMode = RoutineTargetMode.targetTime,
     this.targetTimeMinutes = 18 * 60 + 30,
     this.targetDurationMinutes = 8 * 60,
+    this.keepNoteTicksAcrossDays = true,
     this.wakeReminderHour = 8,
     this.wakeReminderMinute = 0,
     this.themeMode = 'system',
@@ -70,6 +74,7 @@ class AppSettings {
     RoutineTargetMode? targetMode,
     int? targetTimeMinutes,
     int? targetDurationMinutes,
+    bool? keepNoteTicksAcrossDays,
     int? wakeReminderHour,
     int? wakeReminderMinute,
     String? themeMode,
@@ -91,6 +96,8 @@ class AppSettings {
       targetMode: targetMode ?? this.targetMode,
       targetTimeMinutes: targetTimeMinutes ?? this.targetTimeMinutes,
       targetDurationMinutes: targetDurationMinutes ?? this.targetDurationMinutes,
+      keepNoteTicksAcrossDays:
+          keepNoteTicksAcrossDays ?? this.keepNoteTicksAcrossDays,
       wakeReminderHour: wakeReminderHour ?? this.wakeReminderHour,
       wakeReminderMinute: wakeReminderMinute ?? this.wakeReminderMinute,
       themeMode: themeMode ?? this.themeMode,
@@ -147,6 +154,7 @@ class AppSettings {
       'targetMode': targetMode.name,
       'targetTimeMinutes': targetTimeMinutes,
       'targetDurationMinutes': targetDurationMinutes,
+      'keepNoteTicks': keepNoteTicksAcrossDays ? 1 : 0,
       'wakeReminderHour': wakeReminderHour,
       'wakeReminderMinute': wakeReminderMinute,
       'themeMode': themeMode,
@@ -176,6 +184,7 @@ class AppSettings {
           .clamp(0, 24 * 60 - 1),
       targetDurationMinutes: ((map['targetDurationMinutes'] as int?) ?? 8 * 60)
           .clamp(60, 16 * 60),
+      keepNoteTicksAcrossDays: ((map['keepNoteTicks'] as int?) ?? 1) != 0,
       wakeReminderHour: map['wakeReminderHour'] as int,
       wakeReminderMinute: map['wakeReminderMinute'] as int,
       // Older rows (pre-theme-setting) won't have this column — default

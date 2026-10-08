@@ -2,6 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:wakeflow/models/category_note.dart';
 
 void main() {
+  _tickExpiry();
+
   test('create trims the text and round-trips through the database map', () {
     final now = DateTime(2026, 10, 7, 9, 30);
     final note = CategoryNote.create(
@@ -62,5 +64,46 @@ void main() {
     const stats = NoteStats(5, 2);
     expect(stats.open, 3);
     expect(const NoteStats(2, 2).open, 0);
+  });
+}
+
+void _tickExpiry() {
+  final ticked = CategoryNote.create(
+    categoryId: 'gym',
+    text: 'Warm up',
+    now: DateTime(2026, 10, 7, 9),
+  ).withDone(true, now: DateTime(2026, 10, 7, 10), day: '2026-10-07');
+
+  group('tick expiry', () {
+    test('kept across days: still ticked on later days', () {
+      expect(ticked.isDoneOn('2026-10-08', keepAcrossDays: true), isTrue);
+      expect(
+        ticked.effective('2026-10-08', keepAcrossDays: true).isDone,
+        isTrue,
+      );
+    });
+
+    test('not kept: ticked only on the day it was ticked', () {
+      expect(ticked.isDoneOn('2026-10-07', keepAcrossDays: false), isTrue);
+      expect(ticked.isDoneOn('2026-10-08', keepAcrossDays: false), isFalse);
+      final next = ticked.effective('2026-10-08', keepAcrossDays: false);
+      expect(next.isDone, isFalse);
+      expect(next.doneDay, isNull);
+    });
+
+    test('a tick without a day (older data) expires when not kept', () {
+      final old = CategoryNote.create(
+        categoryId: 'gym',
+        text: 'Stretch',
+        now: DateTime(2026, 10, 1),
+      ).withDone(true, now: DateTime(2026, 10, 1, 8));
+      expect(old.isDoneOn('2026-10-07', keepAcrossDays: false), isFalse);
+      expect(old.isDoneOn('2026-10-07', keepAcrossDays: true), isTrue);
+    });
+
+    test('the tick day survives storage and edits', () {
+      expect(CategoryNote.fromMap(ticked.toMap()).doneDay, '2026-10-07');
+      expect(ticked.edited('Warm up well').doneDay, '2026-10-07');
+    });
   });
 }

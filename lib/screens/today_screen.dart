@@ -17,6 +17,8 @@ import '../services/checkpoint_gate.dart';
 import '../services/routine_engine.dart';
 import '../services/database_service.dart';
 import '../services/alarm_sound.dart';
+import '../services/note_context.dart';
+import '../services/note_holder.dart';
 import '../models/category_note.dart';
 import 'category_notes_screen.dart';
 import '../services/notification_service.dart';
@@ -152,6 +154,8 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     Widget tile(Commitment c) =>
         _CommitmentTile(key: ValueKey('commitment-${c.id}'), commitment: c);
     final items = <Widget>[];
+    // Notes sit on one block per category at a time.
+    final noteHolders = noteHolderBlocks(_blocks);
     for (var i = 0; i < _blocks.length; i++) {
       final start = _blocks[i].plannedStart;
       if (start != null) {
@@ -165,7 +169,9 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
         _BlockTile(
           block: block,
           isCurrent: i == currentIndex,
-          noteStats: _noteStats[block.categoryId],
+          noteStats: noteHolders[block.categoryId] == block.id
+              ? _noteStats[block.categoryId]
+              : null,
           onNotes: () => _openNotes(block),
         ),
       );
@@ -177,7 +183,11 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   /// Notes are optional: the screen works the same when none exist.
   Future<void> _loadNoteCounts() async {
     try {
-      final stats = await _db.getNoteStats();
+      final noteContext = await loadNoteContext(_db);
+      final stats = await _db.getNoteStats(
+        today: noteContext.today,
+        keepAcrossDays: noteContext.keepAcrossDays,
+      );
       if (mounted) setState(() => _noteStats = stats);
     } catch (_) {}
   }
@@ -719,6 +729,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final currentIndex = _currentIndex;
     final currentBlock = currentIndex == -1 ? null : _blocks[currentIndex];
+    final noteBlockHolders = noteHolderBlocks(_blocks);
     final breakState = _break();
 
     return Scaffold(
@@ -808,7 +819,11 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
                     canComplete: _canComplete(currentBlock),
                     completeHint: _unlockHint(currentBlock),
                     onSkip: () => _actOn(currentBlock, _skipCurrent),
-                    noteStats: _noteStats[currentBlock.categoryId],
+                    noteStats:
+                        noteBlockHolders[currentBlock.categoryId] ==
+                            currentBlock.id
+                        ? _noteStats[currentBlock.categoryId]
+                        : null,
                     onNotes: () => _openNotes(currentBlock),
                   )
                 : const _DayCompletePanel(key: ValueKey('day-complete')),

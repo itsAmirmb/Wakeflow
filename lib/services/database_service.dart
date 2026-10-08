@@ -38,7 +38,7 @@ class DatabaseService {
   }
 
   /// Bump with every schema change (also written into backups).
-  static const int schemaVersion = 19;
+  static const int schemaVersion = 20;
 
   /// Every table that holds user data, in a safe restore order.
   static const List<String> backupTables = [
@@ -210,6 +210,16 @@ class DatabaseService {
         'INTEGER NOT NULL DEFAULT 5',
       );
     }
+    // v19 -> v20: ticks remember their day; optional reset on a new day.
+    if (oldVersion < 20) {
+      await ensureColumn(db, 'category_notes', 'doneDay', 'TEXT');
+      await ensureColumn(
+        db,
+        'settings',
+        'keepNoteTicks',
+        'INTEGER NOT NULL DEFAULT 1',
+      );
+    }
     // v18 -> v19: notes can be ticked off.
     if (oldVersion < 19) {
       await ensureColumn(db, 'category_notes', 'doneAt', 'TEXT');
@@ -306,7 +316,8 @@ class DatabaseService {
       text TEXT NOT NULL,
       createdAt TEXT NOT NULL,
       updatedAt TEXT NOT NULL,
-      doneAt TEXT
+      doneAt TEXT,
+      doneDay TEXT
     )''');
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_notes_category '
@@ -402,6 +413,7 @@ class DatabaseService {
         targetMode TEXT NOT NULL DEFAULT 'targetTime',
         targetTimeMinutes INTEGER NOT NULL DEFAULT 1110,
         targetDurationMinutes INTEGER NOT NULL DEFAULT 480,
+        keepNoteTicks INTEGER NOT NULL DEFAULT 1,
         wakeReminderHour INTEGER NOT NULL,
         wakeReminderMinute INTEGER NOT NULL,
         themeMode TEXT NOT NULL DEFAULT 'system',
@@ -534,8 +546,12 @@ class DatabaseService {
 
   // ---------- Category notes ----------
 
-  /// Newest first.
-  Future<List<CategoryNote>> getNotes(String categoryId) async {
+  /// Newest first, with ticks that no longer count today shown as open.
+  Future<List<CategoryNote>> getNotes(
+    String categoryId, {
+    required String today,
+    required bool keepAcrossDays,
+  }) async {
     final db = await database;
     final rows = await db.query(
       'category_notes',
@@ -543,33 +559,45 @@ class DatabaseService {
       whereArgs: [categoryId],
       orderBy: 'createdAt DESC',
     );
-    return rows.map(CategoryNote.fromMap).toList();
+    return [
+      for (final row in rows)
+        CategoryNote.fromMap(row).effective(today, keepAcrossDays: keepAcrossDays),
+    ];
   }
 
   /// Notes and ticked-off notes per category id (categories without notes
-  /// are absent).
-  Future<Map<String, NoteStats>> getNoteStats() async {
+  /// are absent). Uses the same expiry rule as [getNotes].
+  Future<Map<String, NoteStats>> getNoteStats({
+    required String today,
+    required bool keepAcrossDays,
+  }) async {
     final db = await database;
-    final rows = await db.rawQuery(
-      'SELECT categoryId, COUNT(*) AS total, '
-      'SUM(CASE WHEN doneAt IS NULL THEN 0 ELSE 1 END) AS done '
-      'FROM category_notes GROUP BY categoryId',
-    );
+    final rows = await db.query('category_notes');
+    final totals = <String, int>{};
+    final done = <String, int>{};
+    for (final row in rows) {
+      final note = CategoryNote.fromMap(row);
+      totals[note.categoryId] = (totals[note.categoryId] ?? 0) + 1;
+      if (note.isDoneOn(today, keepAcrossDays: keepAcrossDays)) {
+        done[note.categoryId] = (done[note.categoryId] ?? 0) + 1;
+      }
+    }
     return {
-      for (final r in rows)
-        r['categoryId'] as String: NoteStats(
-          r['total'] as int,
-          (r['done'] as int?) ?? 0,
-        ),
+      for (final entry in totals.entries)
+        entry.key: NoteStats(entry.value, done[entry.key] ?? 0),
     };
   }
 
-  /// Ticks a note off ([doneAt] set) or re-opens it (null).
-  Future<void> setNoteDone(String id, DateTime? doneAt) async {
+  /// Ticks a note off ([doneAt] and its [doneDay] set) or re-opens it (null).
+  Future<void> setNoteDone(
+    String id,
+    DateTime? doneAt,
+    String? doneDay,
+  ) async {
     final db = await database;
     await db.update(
       'category_notes',
-      {'doneAt': doneAt?.toIso8601String()},
+      {'doneAt': doneAt?.toIso8601String(), 'doneDay': doneDay},
       where: 'id = ?',
       whereArgs: [id],
     );
@@ -579,7 +607,7 @@ class DatabaseService {
     final db = await database;
     await db.update(
       'category_notes',
-      {'doneAt': null},
+      {'doneAt': null, 'doneDay': null},
       where: 'categoryId = ?',
       whereArgs: [categoryId],
     );

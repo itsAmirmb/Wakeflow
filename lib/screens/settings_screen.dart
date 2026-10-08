@@ -15,6 +15,7 @@ import '../widgets/category_timeline_bar.dart';
 import '../widgets/commitment_editor.dart';
 import 'backup_section.dart';
 import '../models/category_note.dart';
+import '../services/note_context.dart';
 import 'category_notes_screen.dart';
 import 'schedule_screen.dart';
 import '../services/day_key.dart';
@@ -78,7 +79,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       } catch (_) {}
       var noteStats = <String, NoteStats>{};
       try {
-        noteStats = await DatabaseService.instance.getNoteStats();
+        noteStats = await _loadNoteStats();
       } catch (_) {}
       if (!mounted) return;
       setState(() {
@@ -92,6 +93,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<Map<String, NoteStats>> _loadNoteStats() async {
+    final noteContext = await loadNoteContext(DatabaseService.instance);
+    return DatabaseService.instance.getNoteStats(
+      today: noteContext.today,
+      keepAcrossDays: noteContext.keepAcrossDays,
+    );
+  }
+
   Future<void> _openNotes(Category category) async {
     await Navigator.push(
       context,
@@ -100,7 +109,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
     try {
-      final stats = await DatabaseService.instance.getNoteStats();
+      final stats = await _loadNoteStats();
       if (mounted) setState(() => _noteStats = stats);
     } catch (_) {}
   }
@@ -697,6 +706,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       selection.first == DistillKeepMode.minutes ? 5 : 20,
                 ),
               ),
+            ),
+          ),
+          const _SectionHeader('Notes'),
+          SwitchListTile(
+            secondary: const Icon(Icons.task_alt),
+            title: const Text('Keep ticks for the next day'),
+            subtitle: Text(
+              _settings.keepNoteTicksAcrossDays
+                  ? 'Ticked notes stay ticked'
+                  : 'Notes reset every new day',
+            ),
+            value: _settings.keepNoteTicksAcrossDays,
+            onChanged: (value) => _saveSettings(
+              _settings.copyWith(keepNoteTicksAcrossDays: value),
             ),
           ),
           const _SectionHeader('Notifications'),

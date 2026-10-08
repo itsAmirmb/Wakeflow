@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../models/category.dart';
 import '../models/category_note.dart';
 import '../services/database_service.dart';
+import '../services/note_context.dart';
 import '../widgets/empty_state.dart';
 
 const int _maxNoteLength = 2000;
@@ -34,6 +35,7 @@ class CategoryNotesScreen extends StatefulWidget {
 class _CategoryNotesScreenState extends State<CategoryNotesScreen> {
   List<CategoryNote>? _notes;
   bool _failed = false;
+  String _today = '';
 
   DatabaseService get _db => DatabaseService.instance;
 
@@ -45,10 +47,16 @@ class _CategoryNotesScreenState extends State<CategoryNotesScreen> {
 
   Future<void> _load() async {
     try {
-      final notes = await _db.getNotes(widget.category.id);
+      final noteContext = await loadNoteContext(_db);
+      final notes = await _db.getNotes(
+        widget.category.id,
+        today: noteContext.today,
+        keepAcrossDays: noteContext.keepAcrossDays,
+      );
       if (!mounted) return;
       setState(() {
         _notes = notes;
+        _today = noteContext.today;
         _failed = false;
       });
     } catch (_) {
@@ -81,12 +89,12 @@ class _CategoryNotesScreenState extends State<CategoryNotesScreen> {
   Future<void> _toggle(CategoryNote note) async {
     final notes = _notes;
     if (notes == null) return;
-    final updated = note.withDone(!note.isDone);
+    final updated = note.withDone(!note.isDone, day: _today);
     final index = notes.indexWhere((n) => n.id == note.id);
     if (index == -1) return;
     setState(() => _notes = [...notes]..[index] = updated);
     try {
-      await _db.setNoteDone(note.id, updated.doneAt);
+      await _db.setNoteDone(note.id, updated.doneAt, updated.doneDay);
     } catch (_) {
       if (mounted) {
         setState(() => _notes = [...?_notes]..[index] = note);
@@ -291,6 +299,7 @@ class _NotesSheet extends StatefulWidget {
 class _NotesSheetState extends State<_NotesSheet> {
   List<CategoryNote>? _notes;
   bool _failed = false;
+  String _today = '';
 
   DatabaseService get _db => DatabaseService.instance;
 
@@ -302,10 +311,16 @@ class _NotesSheetState extends State<_NotesSheet> {
 
   Future<void> _load() async {
     try {
-      final notes = await _db.getNotes(widget.category.id);
+      final noteContext = await loadNoteContext(_db);
+      final notes = await _db.getNotes(
+        widget.category.id,
+        today: noteContext.today,
+        keepAcrossDays: noteContext.keepAcrossDays,
+      );
       if (mounted) {
         setState(() {
           _notes = notes;
+          _today = noteContext.today;
           _failed = false;
         });
       }
@@ -325,10 +340,10 @@ class _NotesSheetState extends State<_NotesSheet> {
     final notes = _notes;
     if (notes == null) return;
     final note = notes[index];
-    final updated = note.withDone(!note.isDone);
+    final updated = note.withDone(!note.isDone, day: _today);
     setState(() => _notes = [...notes]..[index] = updated);
     try {
-      await _db.setNoteDone(note.id, updated.doneAt);
+      await _db.setNoteDone(note.id, updated.doneAt, updated.doneDay);
     } catch (_) {
       if (!mounted) return;
       setState(() => _notes = [...?_notes]..[index] = note);

@@ -11,6 +11,10 @@ class CategoryNote {
   /// When the note was ticked off; null while it is still open.
   final DateTime? doneAt;
 
+  /// The app day (yyyy-MM-dd) it was ticked on, so the tick can expire when
+  /// the user chooses not to keep ticks for the next day.
+  final String? doneDay;
+
   const CategoryNote({
     required this.id,
     required this.categoryId,
@@ -18,9 +22,28 @@ class CategoryNote {
     required this.createdAt,
     required this.updatedAt,
     this.doneAt,
+    this.doneDay,
   });
 
   bool get isDone => doneAt != null;
+
+  /// Ticked off, and the tick still counts today: always when ticks are kept
+  /// across days, otherwise only when it was made today.
+  bool isDoneOn(String today, {required bool keepAcrossDays}) =>
+      doneAt != null && (keepAcrossDays || doneDay == today);
+
+  /// This note as it should be seen today: a tick that has expired shows as
+  /// open. Nothing is deleted, so switching the setting back brings it back.
+  CategoryNote effective(String today, {required bool keepAcrossDays}) =>
+      doneAt == null || isDoneOn(today, keepAcrossDays: keepAcrossDays)
+      ? this
+      : CategoryNote(
+          id: id,
+          categoryId: categoryId,
+          text: text,
+          createdAt: createdAt,
+          updatedAt: updatedAt,
+        );
 
   factory CategoryNote.create({
     required String categoryId,
@@ -45,17 +68,20 @@ class CategoryNote {
     createdAt: createdAt,
     updatedAt: now ?? DateTime.now(),
     doneAt: doneAt,
+    doneDay: doneDay,
   );
 
   /// Ticked off (or back to open) without touching anything else.
-  CategoryNote withDone(bool done, {DateTime? now}) => CategoryNote(
-    id: id,
-    categoryId: categoryId,
-    text: text,
-    createdAt: createdAt,
-    updatedAt: updatedAt,
-    doneAt: done ? (now ?? DateTime.now()) : null,
-  );
+  CategoryNote withDone(bool done, {DateTime? now, String? day}) =>
+      CategoryNote(
+        id: id,
+        categoryId: categoryId,
+        text: text,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+        doneAt: done ? (now ?? DateTime.now()) : null,
+        doneDay: done ? day : null,
+      );
 
   Map<String, Object?> toMap() => {
     'id': id,
@@ -64,6 +90,7 @@ class CategoryNote {
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt.toIso8601String(),
     'doneAt': doneAt?.toIso8601String(),
+    'doneDay': doneDay,
   };
 
   factory CategoryNote.fromMap(Map<String, Object?> map) => CategoryNote(
@@ -75,6 +102,7 @@ class CategoryNote {
     doneAt: map['doneAt'] == null
         ? null
         : DateTime.parse(map['doneAt'] as String),
+    doneDay: map['doneDay'] as String?,
   );
 }
 
