@@ -7,6 +7,7 @@ import 'today_screen.dart';
 import 'settings_screen.dart';
 import 'stats_screen.dart';
 import 'rewards_screen.dart';
+import 'day_timeline_screen.dart';
 import 'schedule_screen.dart';
 import '../models/day_mode.dart';
 import '../models/block.dart';
@@ -351,6 +352,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (context) => const ScheduleScreen()),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Day timeline',
+            icon: const Icon(Icons.timeline),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const DayTimelineScreen(),
+              ),
             ),
           ),
         ],

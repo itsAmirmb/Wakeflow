@@ -21,6 +21,7 @@ import '../services/note_context.dart';
 import '../services/note_holder.dart';
 import '../models/category_note.dart';
 import 'category_notes_screen.dart';
+import 'day_timeline_screen.dart';
 import '../services/notification_service.dart';
 import '../widgets/block_status_style.dart';
 import '../widgets/circular_timer.dart';
@@ -736,6 +737,16 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
       appBar: AppBar(
         title: const Text('Today'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.timeline),
+            tooltip: 'Day timeline',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (_) => DayTimelineScreen(day: widget.day),
+              ),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Review checkpoint',
