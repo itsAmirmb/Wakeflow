@@ -14,6 +14,7 @@ import '../widgets/category_editor.dart';
 import '../widgets/category_timeline_bar.dart';
 import '../widgets/commitment_editor.dart';
 import 'backup_section.dart';
+import '../models/category_note.dart';
 import 'category_notes_screen.dart';
 import 'schedule_screen.dart';
 import '../services/day_key.dart';
@@ -49,7 +50,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   List<Category>? _categories;
   List<Commitment> _commitments = const [];
-  Map<String, int> _noteCounts = const {};
+  Map<String, NoteStats> _noteStats = const {};
   AppSettings _settings = const AppSettings();
   AppSettings _persistedSettings = const AppSettings();
   bool _saving = false;
@@ -75,15 +76,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
       try {
         commitments = await DatabaseService.instance.getCommitments();
       } catch (_) {}
-      var noteCounts = <String, int>{};
+      var noteStats = <String, NoteStats>{};
       try {
-        noteCounts = await DatabaseService.instance.getNoteCounts();
+        noteStats = await DatabaseService.instance.getNoteStats();
       } catch (_) {}
       if (!mounted) return;
       setState(() {
         _categories = categories;
         _commitments = commitments;
-        _noteCounts = noteCounts;
+        _noteStats = noteStats;
         _settings = _persistedSettings = settings;
       });
     } catch (_) {
@@ -99,8 +100,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
     try {
-      final counts = await DatabaseService.instance.getNoteCounts();
-      if (mounted) setState(() => _noteCounts = counts);
+      final stats = await DatabaseService.instance.getNoteStats();
+      if (mounted) setState(() => _noteStats = stats);
     } catch (_) {}
   }
 
@@ -730,7 +731,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               category: category,
               onChanged: _saveCategory,
               onDelete: () => _deleteCategory(category),
-              noteCount: _noteCounts[category.id] ?? 0,
+              noteCount: _noteStats[category.id]?.total ?? 0,
               onNotes: () => _openNotes(category),
             ),
           ),

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/category.dart';
 import '../models/category_note.dart';
@@ -9,7 +10,18 @@ import '../widgets/empty_state.dart';
 
 const int _maxNoteLength = 2000;
 
-/// Manage a category's notes: add, edit, delete (with undo).
+/// Done notes are struck through and dimmed, so the state reads at a glance
+/// without relying on colour alone.
+TextStyle? _noteStyle(BuildContext context, CategoryNote note) {
+  final base = Theme.of(context).textTheme.bodyLarge;
+  if (!note.isDone) return base;
+  return base?.copyWith(
+    decoration: TextDecoration.lineThrough,
+    color: Theme.of(context).colorScheme.onSurfaceVariant,
+  );
+}
+
+/// Manage a category's notes: add, edit, tick off, delete (with undo).
 class CategoryNotesScreen extends StatefulWidget {
   final Category category;
 
@@ -65,6 +77,33 @@ class _CategoryNotesScreenState extends State<CategoryNotesScreen> {
     }
   }
 
+  /// Instant on screen, saved in the background; put back if saving fails.
+  Future<void> _toggle(CategoryNote note) async {
+    final notes = _notes;
+    if (notes == null) return;
+    final updated = note.withDone(!note.isDone);
+    final index = notes.indexWhere((n) => n.id == note.id);
+    if (index == -1) return;
+    setState(() => _notes = [...notes]..[index] = updated);
+    try {
+      await _db.setNoteDone(note.id, updated.doneAt);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _notes = [...?_notes]..[index] = note);
+      }
+      _toast('Could not update the note.');
+    }
+  }
+
+  Future<void> _uncheckAll() async {
+    try {
+      await _db.uncheckAllNotes(widget.category.id);
+      await _load();
+    } catch (_) {
+      _toast('Could not update the notes.');
+    }
+  }
+
   Future<void> _delete(CategoryNote note) async {
     try {
       await _db.deleteNote(note.id);
@@ -92,8 +131,19 @@ class _CategoryNotesScreenState extends State<CategoryNotesScreen> {
   Widget build(BuildContext context) {
     final category = widget.category;
     final notes = _notes;
+    final anyDone = notes?.any((n) => n.isDone) ?? false;
     return Scaffold(
-      appBar: AppBar(title: Text('${category.icon} ${category.name} notes')),
+      appBar: AppBar(
+        title: Text('${category.icon} ${category.name} notes'),
+        actions: [
+          if (anyDone)
+            IconButton(
+              tooltip: 'Untick all',
+              icon: const Icon(Icons.remove_done),
+              onPressed: _uncheckAll,
+            ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _addOrEdit(null),
         icon: const Icon(Icons.add),
@@ -126,23 +176,30 @@ class _CategoryNotesScreenState extends State<CategoryNotesScreen> {
                 final note = notes[index];
                 return Card(
                   margin: const EdgeInsets.symmetric(vertical: 6),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () => _addOrEdit(note),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 4, 12),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(child: Text(note.text)),
-                          IconButton(
-                            tooltip: 'Delete note',
-                            icon: const Icon(Icons.delete_outline),
-                            onPressed: () => _delete(note),
-                          ),
-                        ],
+                  child: Row(
+                    children: [
+                      Checkbox(
+                        value: note.isDone,
+                        onChanged: (_) => _toggle(note),
                       ),
-                    ),
+                      Expanded(
+                        child: InkWell(
+                          onTap: () => _addOrEdit(note),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            child: Text(
+                              note.text,
+                              style: _noteStyle(context, note),
+                            ),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Delete note',
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () => _delete(note),
+                      ),
+                    ],
                   ),
                 );
               },
@@ -210,8 +267,9 @@ class _NoteDialogState extends State<_NoteDialog> {
   }
 }
 
-/// Read-first bottom sheet with a category's notes, for use mid-work. The
-/// Edit button opens the full manager.
+/// Bottom sheet with a category's notes, for use mid-work: tap a note to
+/// tick it off, tap again to undo; long-press copies its text. The Edit
+/// button opens the full manager.
 Future<void> showCategoryNotesSheet(BuildContext context, Category category) {
   return showModalBottomSheet<void>(
     context: context,
@@ -231,9 +289,57 @@ class _NotesSheet extends StatefulWidget {
 }
 
 class _NotesSheetState extends State<_NotesSheet> {
-  late Future<List<CategoryNote>> _future = DatabaseService.instance.getNotes(
-    widget.category.id,
-  );
+  List<CategoryNote>? _notes;
+  bool _failed = false;
+
+  DatabaseService get _db => DatabaseService.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    try {
+      final notes = await _db.getNotes(widget.category.id);
+      if (mounted) {
+        setState(() {
+          _notes = notes;
+          _failed = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  void _toast(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// Instant on screen, saved in the background; put back if saving fails.
+  Future<void> _toggle(int index) async {
+    final notes = _notes;
+    if (notes == null) return;
+    final note = notes[index];
+    final updated = note.withDone(!note.isDone);
+    setState(() => _notes = [...notes]..[index] = updated);
+    try {
+      await _db.setNoteDone(note.id, updated.doneAt);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _notes = [...?_notes]..[index] = note);
+      _toast('Could not update the note.');
+    }
+  }
+
+  Future<void> _copy(CategoryNote note) async {
+    await Clipboard.setData(ClipboardData(text: note.text));
+    if (mounted) _toast('Note copied');
+  }
 
   Future<void> _edit() async {
     await Navigator.push(
@@ -242,15 +348,15 @@ class _NotesSheetState extends State<_NotesSheet> {
         builder: (context) => CategoryNotesScreen(category: widget.category),
       ),
     );
-    if (!mounted) return;
-    setState(() {
-      _future = DatabaseService.instance.getNotes(widget.category.id);
-    });
+    if (mounted) await _load();
   }
 
   @override
   Widget build(BuildContext context) {
     final category = widget.category;
+    final scheme = Theme.of(context).colorScheme;
+    final notes = _notes;
+    final done = notes?.where((n) => n.isDone).length ?? 0;
     final height = MediaQuery.sizeOf(context).height * 0.6;
     return SizedBox(
       height: height,
@@ -262,9 +368,20 @@ class _NotesSheetState extends State<_NotesSheet> {
             child: Row(
               children: [
                 Expanded(
-                  child: Text(
-                    '${category.icon} ${category.name} notes',
-                    style: Theme.of(context).textTheme.titleMedium,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${category.icon} ${category.name} notes',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      if (notes != null && notes.isNotEmpty)
+                        Text(
+                          '$done of ${notes.length} done',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: scheme.onSurfaceVariant),
+                        ),
+                    ],
                   ),
                 ),
                 TextButton.icon(
@@ -277,31 +394,41 @@ class _NotesSheetState extends State<_NotesSheet> {
           ),
           const Divider(height: 1),
           Expanded(
-            child: FutureBuilder<List<CategoryNote>>(
-              future: _future,
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return const Center(child: Text('Could not load notes.'));
-                }
-                final notes = snapshot.data;
-                if (notes == null) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (notes.isEmpty) {
-                  return const EmptyState(
+            child: _failed
+                ? const Center(child: Text('Could not load notes.'))
+                : notes == null
+                ? const Center(child: CircularProgressIndicator())
+                : notes.isEmpty
+                ? const EmptyState(
                     icon: Icons.sticky_note_2_outlined,
                     message: 'No notes yet.',
-                  );
-                }
-                return ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                  itemCount: notes.length,
-                  separatorBuilder: (context, index) => const Divider(height: 24),
-                  itemBuilder: (context, index) =>
-                      SelectableText(notes[index].text),
-                );
-              },
-            ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.only(bottom: 24),
+                    itemCount: notes.length,
+                    separatorBuilder: (context, index) =>
+                        const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final note = notes[index];
+                      return Semantics(
+                        checked: note.isDone,
+                        child: ListTile(
+                          leading: Icon(
+                            note.isDone
+                                ? Icons.check_circle
+                                : Icons.radio_button_unchecked,
+                            color: note.isDone ? scheme.primary : null,
+                          ),
+                          title: Text(
+                            note.text,
+                            style: _noteStyle(context, note),
+                          ),
+                          onTap: () => _toggle(index),
+                          onLongPress: () => _copy(note),
+                        ),
+                      );
+                    },
+                  ),
           ),
         ],
       ),

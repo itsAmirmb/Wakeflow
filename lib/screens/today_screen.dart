@@ -17,6 +17,7 @@ import '../services/checkpoint_gate.dart';
 import '../services/routine_engine.dart';
 import '../services/database_service.dart';
 import '../services/alarm_sound.dart';
+import '../models/category_note.dart';
 import 'category_notes_screen.dart';
 import '../services/notification_service.dart';
 import '../widgets/block_status_style.dart';
@@ -66,7 +67,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   bool _reviewing = false;
   bool _alarmSilenced = false;
   bool _breakRang = false;
-  Map<String, int> _noteCounts = const {};
+  Map<String, NoteStats> _noteStats = const {};
   Timer? _gateTimer;
   DateTime? _gateWake;
   DateTime? _gateEnd;
@@ -164,7 +165,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
         _BlockTile(
           block: block,
           isCurrent: i == currentIndex,
-          noteCount: _noteCounts[block.categoryId] ?? 0,
+          noteStats: _noteStats[block.categoryId],
           onNotes: () => _openNotes(block),
         ),
       );
@@ -176,8 +177,8 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   /// Notes are optional: the screen works the same when none exist.
   Future<void> _loadNoteCounts() async {
     try {
-      final counts = await _db.getNoteCounts();
-      if (mounted) setState(() => _noteCounts = counts);
+      final stats = await _db.getNoteStats();
+      if (mounted) setState(() => _noteStats = stats);
     } catch (_) {}
   }
 
@@ -807,7 +808,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
                     canComplete: _canComplete(currentBlock),
                     completeHint: _unlockHint(currentBlock),
                     onSkip: () => _actOn(currentBlock, _skipCurrent),
-                    noteCount: _noteCounts[currentBlock.categoryId] ?? 0,
+                    noteStats: _noteStats[currentBlock.categoryId],
                     onNotes: () => _openNotes(currentBlock),
                   )
                 : const _DayCompletePanel(key: ValueKey('day-complete')),
@@ -821,13 +822,13 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
 class _BlockTile extends StatelessWidget {
   final Block block;
   final bool isCurrent;
-  final int noteCount;
+  final NoteStats? noteStats;
   final VoidCallback? onNotes;
 
   const _BlockTile({
     required this.block,
     required this.isCurrent,
-    this.noteCount = 0,
+    this.noteStats,
     this.onNotes,
   });
 
@@ -871,15 +872,8 @@ class _BlockTile extends StatelessWidget {
         ),
         subtitle: Text(_subtitle(style.label)),
         // Only categories that have notes show the shortcut.
-        trailing: noteCount > 0 && onNotes != null
-            ? IconButton(
-                tooltip: 'Notes',
-                onPressed: onNotes,
-                icon: Badge(
-                  label: Text('$noteCount'),
-                  child: const Icon(Icons.sticky_note_2_outlined),
-                ),
-              )
+        trailing: noteStats != null && noteStats!.total > 0 && onNotes != null
+            ? _NotesButton(stats: noteStats!, onPressed: onNotes!)
             : null,
       ),
     );
@@ -944,7 +938,7 @@ class _CurrentBlockPanel extends StatelessWidget {
   final VoidCallback onSkip;
   final bool canComplete;
   final String completeHint;
-  final int noteCount;
+  final NoteStats? noteStats;
   final VoidCallback? onNotes;
 
   const _CurrentBlockPanel({
@@ -957,7 +951,7 @@ class _CurrentBlockPanel extends StatelessWidget {
     required this.onSkip,
     required this.canComplete,
     required this.completeHint,
-    this.noteCount = 0,
+    this.noteStats,
     this.onNotes,
   });
 
@@ -999,21 +993,13 @@ class _CurrentBlockPanel extends StatelessWidget {
                     color: scheme.primary,
                   ),
                 ),
-                if (noteCount > 0 && onNotes != null)
+                if (noteStats != null && noteStats!.total > 0 && onNotes != null)
                   Align(
                     alignment: Alignment.centerRight,
-                    child: IconButton(
-                      tooltip: 'Notes',
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints.tightFor(
-                        width: 36,
-                        height: 32,
-                      ),
-                      onPressed: onNotes,
-                      icon: Badge(
-                        label: Text('$noteCount'),
-                        child: const Icon(Icons.sticky_note_2_outlined),
-                      ),
+                    child: _NotesButton(
+                      stats: noteStats!,
+                      onPressed: onNotes!,
+                      compact: true,
                     ),
                   ),
               ],
@@ -1296,6 +1282,38 @@ class _ActionButton extends StatelessWidget {
               icon: iconWidget,
               label: _OneLine(label),
             ),
+    );
+  }
+}
+
+/// Shortcut to a category's notes. The badge counts the notes still open;
+/// when every note is ticked off the icon becomes a check mark instead.
+class _NotesButton extends StatelessWidget {
+  final NoteStats stats;
+  final VoidCallback onPressed;
+  final bool compact;
+
+  const _NotesButton({
+    required this.stats,
+    required this.onPressed,
+    this.compact = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final open = stats.open;
+    return IconButton(
+      tooltip: open == 0 ? 'Notes (all done)' : 'Notes ($open left)',
+      padding: compact ? EdgeInsets.zero : null,
+      constraints: compact
+          ? const BoxConstraints.tightFor(width: 36, height: 32)
+          : null,
+      onPressed: onPressed,
+      icon: Badge(
+        isLabelVisible: open > 0,
+        label: Text('$open'),
+        child: Icon(open == 0 ? Icons.task_alt : Icons.sticky_note_2_outlined),
+      ),
     );
   }
 }

@@ -38,7 +38,7 @@ class DatabaseService {
   }
 
   /// Bump with every schema change (also written into backups).
-  static const int schemaVersion = 18;
+  static const int schemaVersion = 19;
 
   /// Every table that holds user data, in a safe restore order.
   static const List<String> backupTables = [
@@ -210,6 +210,10 @@ class DatabaseService {
         'INTEGER NOT NULL DEFAULT 5',
       );
     }
+    // v18 -> v19: notes can be ticked off.
+    if (oldVersion < 19) {
+      await ensureColumn(db, 'category_notes', 'doneAt', 'TEXT');
+    }
     // v17 -> v18: notes attached to categories.
     if (oldVersion < 18) {
       await _createCategoryNotesTable(db);
@@ -301,7 +305,8 @@ class DatabaseService {
       categoryId TEXT NOT NULL,
       text TEXT NOT NULL,
       createdAt TEXT NOT NULL,
-      updatedAt TEXT NOT NULL
+      updatedAt TEXT NOT NULL,
+      doneAt TEXT
     )''');
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_notes_category '
@@ -541,13 +546,43 @@ class DatabaseService {
     return rows.map(CategoryNote.fromMap).toList();
   }
 
-  /// Number of notes per category id (categories without notes are absent).
-  Future<Map<String, int>> getNoteCounts() async {
+  /// Notes and ticked-off notes per category id (categories without notes
+  /// are absent).
+  Future<Map<String, NoteStats>> getNoteStats() async {
     final db = await database;
     final rows = await db.rawQuery(
-      'SELECT categoryId, COUNT(*) AS n FROM category_notes GROUP BY categoryId',
+      'SELECT categoryId, COUNT(*) AS total, '
+      'SUM(CASE WHEN doneAt IS NULL THEN 0 ELSE 1 END) AS done '
+      'FROM category_notes GROUP BY categoryId',
     );
-    return {for (final r in rows) r['categoryId'] as String: r['n'] as int};
+    return {
+      for (final r in rows)
+        r['categoryId'] as String: NoteStats(
+          r['total'] as int,
+          (r['done'] as int?) ?? 0,
+        ),
+    };
+  }
+
+  /// Ticks a note off ([doneAt] set) or re-opens it (null).
+  Future<void> setNoteDone(String id, DateTime? doneAt) async {
+    final db = await database;
+    await db.update(
+      'category_notes',
+      {'doneAt': doneAt?.toIso8601String()},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> uncheckAllNotes(String categoryId) async {
+    final db = await database;
+    await db.update(
+      'category_notes',
+      {'doneAt': null},
+      where: 'categoryId = ?',
+      whereArgs: [categoryId],
+    );
   }
 
   Future<void> saveNote(CategoryNote note) async {
