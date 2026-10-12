@@ -178,13 +178,17 @@ class _DayModeScreenState extends State<DayModeScreen> {
       kept = [];
     }
 
-    // Fixed events of this day (re-read: one may have just been added).
+    // Fixed events of the whole routine, which may run past midnight
+    // (re-read: one may have just been added).
     var busy = <BusyInterval>[];
     try {
-      final date = DateTime.parse(today);
       busy = [
-        for (final c in await DatabaseService.instance.getCommitmentsForDay(today))
-          c.intervalOn(date),
+        for (final slot in Commitment.slotsBetween(
+          await DatabaseService.instance.getCommitments(),
+          DateTime.parse(today),
+          dayEnd,
+        ))
+          slot.interval,
       ];
     } catch (_) {}
 

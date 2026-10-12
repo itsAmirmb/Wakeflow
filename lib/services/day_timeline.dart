@@ -77,16 +77,22 @@ class DayTimeline {
       );
     }
 
+    // The routine may run past midnight: fixed events of the following
+    // days belong in it too.
+    var spanEnd = dayEnd ?? DateTime(day.year, day.month, day.day + 1);
+    for (final b in timed) {
+      final end = b.plannedEnd ?? b.actualEnd;
+      if (end != null && end.isAfter(spanEnd)) spanEnd = end;
+    }
     final busy = <BusyInterval>[];
-    for (final commitment in commitments.where((c) => c.occursOn(day))) {
-      final interval = commitment.intervalOn(day);
-      busy.add(interval);
+    for (final slot in Commitment.slotsBetween(commitments, day, spanEnd)) {
+      busy.add(slot.interval);
       entries.add(
         TimelineEntry(
           kind: TimelineKind.commitment,
-          start: interval.start,
-          end: interval.end,
-          title: commitment.title,
+          start: slot.interval.start,
+          end: slot.interval.end,
+          title: slot.commitment.title,
           detail: 'Fixed commitment',
         ),
       );

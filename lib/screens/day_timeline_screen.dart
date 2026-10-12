@@ -77,7 +77,8 @@ class _DayTimelineScreenState extends State<DayTimelineScreen>
       final blocks = await db.getBlocksForDay(day);
       final categories = await db.getCategories();
       final meta = await db.getDayMeta(day);
-      final commitments = await db.getCommitmentsForDay(day);
+      // All of them: the timeline picks the ones inside the routine's span.
+      final commitments = await db.getCommitments();
       final settings = await db.getSettings();
       final reviews = await db.getCheckpoints(day);
 

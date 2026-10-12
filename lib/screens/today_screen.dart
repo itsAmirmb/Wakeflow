@@ -66,7 +66,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   late List<Block> _blocks;
   Timer? _timer;
   AppSettings _settings = const AppSettings();
-  List<Commitment> _commitments = const [];
+  List<CommitmentSlot> _commitmentSlots = const [];
   bool _reviewing = false;
   bool _alarmSilenced = false;
   bool _breakRang = false;
@@ -125,16 +125,23 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   /// a checkpoint re-plans, and reminded shortly before they start.
   Future<void> _loadCommitments() async {
     try {
-      final commitments = await _db.getCommitmentsForDay(widget.day);
+      // The routine can run past midnight, so fixed events of the following
+      // days count too, up to the routine's deadline.
+      final all = await _db.getCommitments();
+      final meta = await _db.getDayMeta(widget.day);
+      final slots = Commitment.slotsBetween(
+        all,
+        DateTime.parse(widget.day),
+        _deadline(meta?.$3),
+      );
       if (!mounted) return;
-      setState(() => _commitments = commitments);
+      setState(() => _commitmentSlots = slots);
       if (widget.syncNotifications != null) return; // injected: no plugin
-      final date = DateTime.parse(widget.day);
       await NotificationService.instance.scheduleCommitmentReminders(
         day: widget.day,
         items: [
-          for (final c in commitments)
-            (title: c.title, start: c.intervalOn(date).start),
+          for (final s in slots)
+            (title: s.commitment.title, start: s.interval.start),
         ],
       );
     } catch (_) {
@@ -143,17 +150,20 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   }
 
   List<BusyInterval> _busy() {
-    final date = DateTime.parse(widget.day);
-    return [for (final c in _commitments) c.intervalOn(date)];
+    return [for (final s in _commitmentSlots) s.interval];
   }
 
   /// Blocks and fixed events in time order (blocks keep their own order).
   List<Widget> _timelineItems(int currentIndex) {
-    final date = DateTime.parse(widget.day);
-    final waiting = [..._commitments]
-      ..sort((a, b) => a.startMinutes.compareTo(b.startMinutes));
-    Widget tile(Commitment c) =>
-        _CommitmentTile(key: ValueKey('commitment-${c.id}'), commitment: c);
+    final routineDay = DateTime.parse(widget.day);
+    final waiting = [..._commitmentSlots]; // already in time order
+    Widget tile(CommitmentSlot s) => _CommitmentTile(
+      key: ValueKey('commitment-${s.commitment.id}-${s.interval.start}'),
+      slot: s,
+      // A fixed event on a later day than the routine's first says which.
+      showWeekday:
+          DateUtils.dateOnly(s.interval.start) != DateUtils.dateOnly(routineDay),
+    );
     final items = <Widget>[];
     // Notes sit on one block per category at a time.
     final noteHolders = noteHolderBlocks(_blocks);
@@ -161,7 +171,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
       final start = _blocks[i].plannedStart;
       if (start != null) {
         while (waiting.isNotEmpty &&
-            !waiting.first.intervalOn(date).start.isAfter(start)) {
+            !waiting.first.interval.start.isAfter(start)) {
           items.add(tile(waiting.removeAt(0)));
         }
       }
@@ -1229,12 +1239,18 @@ class _BreakPanel extends StatelessWidget {
 /// A fixed event (class, work) shown in the timeline. Not a block: it has no
 /// timer and never counts toward "done".
 class _CommitmentTile extends StatelessWidget {
-  final Commitment commitment;
+  final CommitmentSlot slot;
+  final bool showWeekday;
 
-  const _CommitmentTile({super.key, required this.commitment});
+  const _CommitmentTile({
+    super.key,
+    required this.slot,
+    this.showWeekday = false,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final commitment = slot.commitment;
     final scheme = Theme.of(context).colorScheme;
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -1246,7 +1262,8 @@ class _CommitmentTile extends StatelessWidget {
         leading: const Icon(Icons.event),
         title: Text(commitment.title),
         subtitle: Text(
-          'Fixed · ${Commitment.hm(commitment.startMinutes)}–${Commitment.hm(commitment.endMinutes)}',
+          'Fixed · ${showWeekday ? '${Commitment.weekdayNames[slot.interval.start.weekday]} ' : ''}'
+          '${Commitment.hm(commitment.startMinutes)}–${Commitment.hm(commitment.endMinutes)}',
         ),
       ),
     );

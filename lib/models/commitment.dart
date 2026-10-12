@@ -3,6 +3,9 @@ import '../services/day_key.dart';
 /// A fixed time span the planner must not schedule blocks into.
 typedef BusyInterval = ({DateTime start, DateTime end});
 
+/// One occurrence of a [Commitment] on the clock.
+typedef CommitmentSlot = ({Commitment commitment, BusyInterval interval});
+
 /// A fixed event such as a class or a work shift. Either weekly on chosen
 /// weekdays, or a single date. Times are minutes after midnight, same day
 /// (an event crossing midnight is entered as two events).
@@ -53,6 +56,34 @@ class Commitment {
       endMinutes % 60,
     ),
   );
+
+  /// Every occurrence of [commitments] in a routine that starts on the
+  /// calendar day of [from] and runs until [to]. A routine can run past
+  /// midnight, so the days after the first count too: the first day gives all
+  /// its events (also those before the wake-up, as the timeline always
+  /// showed), later days only the events that start before [to].
+  /// Sorted by start time.
+  static List<CommitmentSlot> slotsBetween(
+    Iterable<Commitment> commitments,
+    DateTime from,
+    DateTime to,
+  ) {
+    final slots = <CommitmentSlot>[];
+    // A week is far beyond any routine; the cap only guards a bad [to].
+    for (var i = 0; i < 7; i++) {
+      final day = DateTime(from.year, from.month, from.day + i);
+      if (i > 0 && !day.isBefore(to)) break;
+      for (final c in commitments) {
+        if (!c.occursOn(day)) continue;
+        final interval = c.intervalOn(day);
+        if (i == 0 || interval.start.isBefore(to)) {
+          slots.add((commitment: c, interval: interval));
+        }
+      }
+    }
+    slots.sort((a, b) => a.interval.start.compareTo(b.interval.start));
+    return slots;
+  }
 
   Commitment copyWith({
     String? title,
