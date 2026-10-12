@@ -171,7 +171,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
           block: block,
           isCurrent: i == currentIndex,
           noteStats: noteHolders[block.categoryId] == block.id
-              ? _noteStats[block.categoryId]
+              ? _noteStats[block.categoryId] ?? const NoteStats(0, 0)
               : null,
           onNotes: () => _openNotes(block),
         ),
@@ -833,7 +833,8 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
                     noteStats:
                         noteBlockHolders[currentBlock.categoryId] ==
                             currentBlock.id
-                        ? _noteStats[currentBlock.categoryId]
+                        ? _noteStats[currentBlock.categoryId] ??
+                              const NoteStats(0, 0)
                         : null,
                     onNotes: () => _openNotes(currentBlock),
                   )
@@ -897,8 +898,9 @@ class _BlockTile extends StatelessWidget {
           ),
         ),
         subtitle: Text(_subtitle(style.label)),
-        // Only categories that have notes show the shortcut.
-        trailing: noteStats != null && noteStats!.total > 0 && onNotes != null
+        // The block that holds the category's notes shows the shortcut, even
+        // when there are none yet, so the first note can be added from here.
+        trailing: noteStats != null && onNotes != null
             ? _NotesButton(stats: noteStats!, onPressed: onNotes!)
             : null,
       ),
@@ -1019,7 +1021,7 @@ class _CurrentBlockPanel extends StatelessWidget {
                     color: scheme.primary,
                   ),
                 ),
-                if (noteStats != null && noteStats!.total > 0 && onNotes != null)
+                if (noteStats != null && onNotes != null)
                   Align(
                     alignment: Alignment.centerRight,
                     child: _NotesButton(
@@ -1313,7 +1315,8 @@ class _ActionButton extends StatelessWidget {
 }
 
 /// Shortcut to a category's notes. The badge counts the notes still open;
-/// when every note is ticked off the icon becomes a check mark instead.
+/// when every note is ticked off the icon becomes a check mark instead, and
+/// with no notes at all it offers to add one.
 class _NotesButton extends StatelessWidget {
   final NoteStats stats;
   final VoidCallback onPressed;
@@ -1328,8 +1331,13 @@ class _NotesButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final open = stats.open;
+    final empty = stats.total == 0;
     return IconButton(
-      tooltip: open == 0 ? 'Notes (all done)' : 'Notes ($open left)',
+      tooltip: empty
+          ? 'Add notes'
+          : open == 0
+          ? 'Notes (all done)'
+          : 'Notes ($open left)',
       padding: compact ? EdgeInsets.zero : null,
       constraints: compact
           ? const BoxConstraints.tightFor(width: 36, height: 32)
@@ -1338,7 +1346,13 @@ class _NotesButton extends StatelessWidget {
       icon: Badge(
         isLabelVisible: open > 0,
         label: Text('$open'),
-        child: Icon(open == 0 ? Icons.task_alt : Icons.sticky_note_2_outlined),
+        child: Icon(
+          empty
+              ? Icons.note_add_outlined
+              : open == 0
+              ? Icons.task_alt
+              : Icons.sticky_note_2_outlined,
+        ),
       ),
     );
   }

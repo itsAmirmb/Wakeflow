@@ -15,6 +15,10 @@ class CategoryNote {
   /// the user chooses not to keep ticks for the next day.
   final String? doneDay;
 
+  /// Place in the category's list, 0 = first. New notes go to the end; ties
+  /// (rows from older backups, all 0) fall back to [createdAt] order.
+  final int position;
+
   const CategoryNote({
     required this.id,
     required this.categoryId,
@@ -23,6 +27,7 @@ class CategoryNote {
     required this.updatedAt,
     this.doneAt,
     this.doneDay,
+    this.position = 0,
   });
 
   bool get isDone => doneAt != null;
@@ -43,6 +48,7 @@ class CategoryNote {
           text: text,
           createdAt: createdAt,
           updatedAt: updatedAt,
+          position: position,
         );
 
   factory CategoryNote.create({
@@ -69,6 +75,7 @@ class CategoryNote {
     updatedAt: now ?? DateTime.now(),
     doneAt: doneAt,
     doneDay: doneDay,
+    position: position,
   );
 
   /// Ticked off (or back to open) without touching anything else.
@@ -81,6 +88,7 @@ class CategoryNote {
         updatedAt: updatedAt,
         doneAt: done ? (now ?? DateTime.now()) : null,
         doneDay: done ? day : null,
+        position: position,
       );
 
   Map<String, Object?> toMap() => {
@@ -91,6 +99,7 @@ class CategoryNote {
     'updatedAt': updatedAt.toIso8601String(),
     'doneAt': doneAt?.toIso8601String(),
     'doneDay': doneDay,
+    'position': position,
   };
 
   factory CategoryNote.fromMap(Map<String, Object?> map) => CategoryNote(
@@ -103,6 +112,7 @@ class CategoryNote {
         ? null
         : DateTime.parse(map['doneAt'] as String),
     doneDay: map['doneDay'] as String?,
+    position: map['position'] as int? ?? 0,
   );
 }
 

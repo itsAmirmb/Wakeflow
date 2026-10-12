@@ -22,7 +22,21 @@ TextStyle? _noteStyle(BuildContext context, CategoryNote note) {
   );
 }
 
-/// Manage a category's notes: add, edit, tick off, delete (with undo).
+/// [notes] with the item at [oldIndex] moved to where ReorderableListView
+/// says it was dropped ([newIndex] still counts the item itself when moving
+/// down, hence the adjustment).
+List<CategoryNote> _moved(
+  List<CategoryNote> notes,
+  int oldIndex,
+  int newIndex,
+) {
+  if (newIndex > oldIndex) newIndex -= 1;
+  final result = [...notes];
+  result.insert(newIndex, result.removeAt(oldIndex));
+  return result;
+}
+
+/// Manage a category's notes: add, edit, tick off, reorder, delete (with undo).
 class CategoryNotesScreen extends StatefulWidget {
   final Category category;
 
@@ -74,11 +88,15 @@ class _CategoryNotesScreenState extends State<CategoryNotesScreen> {
   Future<void> _addOrEdit(CategoryNote? existing) async {
     final text = await _askText(context, initial: existing?.text);
     if (text == null || !mounted) return;
-    final note = existing == null
-        ? CategoryNote.create(categoryId: widget.category.id, text: text)
-        : existing.edited(text);
     try {
-      await _db.saveNote(note);
+      if (existing == null) {
+        // New notes always go to the end of the list.
+        await _db.addNote(
+          CategoryNote.create(categoryId: widget.category.id, text: text),
+        );
+      } else {
+        await _db.saveNote(existing.edited(text));
+      }
       await _load();
     } catch (_) {
       _toast('Could not save the note. Please try again.');
@@ -100,6 +118,20 @@ class _CategoryNotesScreenState extends State<CategoryNotesScreen> {
         setState(() => _notes = [...?_notes]..[index] = note);
       }
       _toast('Could not update the note.');
+    }
+  }
+
+  /// Instant on screen, saved in the background; reloaded if saving fails.
+  Future<void> _reorder(int oldIndex, int newIndex) async {
+    final notes = _notes;
+    if (notes == null) return;
+    final reordered = _moved(notes, oldIndex, newIndex);
+    setState(() => _notes = reordered);
+    try {
+      await _db.reorderNotes([for (final n in reordered) n.id]);
+    } catch (_) {
+      _toast('Could not save the new order.');
+      await _load();
     }
   }
 
@@ -176,13 +208,16 @@ class _CategoryNotesScreenState extends State<CategoryNotesScreen> {
                   'No notes yet. Add rules, reminders or resources you want '
                   'at hand while working on this category.',
             )
-          : ListView.builder(
+          : ReorderableListView.builder(
               // Room for the floating button under the last note.
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+              buildDefaultDragHandles: false,
               itemCount: notes.length,
+              onReorder: _reorder,
               itemBuilder: (context, index) {
                 final note = notes[index];
                 return Card(
+                  key: ValueKey(note.id),
                   margin: const EdgeInsets.symmetric(vertical: 6),
                   child: Row(
                     children: [
@@ -206,6 +241,13 @@ class _CategoryNotesScreenState extends State<CategoryNotesScreen> {
                         tooltip: 'Delete note',
                         icon: const Icon(Icons.delete_outline),
                         onPressed: () => _delete(note),
+                      ),
+                      ReorderableDragStartListener(
+                        index: index,
+                        child: const Padding(
+                          padding: EdgeInsets.fromLTRB(4, 12, 12, 12),
+                          child: Icon(Icons.drag_handle),
+                        ),
                       ),
                     ],
                   ),
@@ -276,8 +318,9 @@ class _NoteDialogState extends State<_NoteDialog> {
 }
 
 /// Bottom sheet with a category's notes, for use mid-work: tap a note to
-/// tick it off, tap again to undo; long-press copies its text. The Edit
-/// button opens the full manager.
+/// tick it off, tap again to undo; long-press copies its text; drag the
+/// handle to reorder; the + button adds a note at the end. The Edit button
+/// opens the full manager.
 Future<void> showCategoryNotesSheet(BuildContext context, Category category) {
   return showModalBottomSheet<void>(
     context: context,
@@ -356,6 +399,34 @@ class _NotesSheetState extends State<_NotesSheet> {
     if (mounted) _toast('Note copied');
   }
 
+  Future<void> _add() async {
+    final text = await _askText(context);
+    if (text == null || !mounted) return;
+    try {
+      // New notes always go to the end of the list.
+      await _db.addNote(
+        CategoryNote.create(categoryId: widget.category.id, text: text),
+      );
+      await _load();
+    } catch (_) {
+      if (mounted) _toast('Could not save the note. Please try again.');
+    }
+  }
+
+  /// Instant on screen, saved in the background; reloaded if saving fails.
+  Future<void> _reorder(int oldIndex, int newIndex) async {
+    final notes = _notes;
+    if (notes == null) return;
+    final reordered = _moved(notes, oldIndex, newIndex);
+    setState(() => _notes = reordered);
+    try {
+      await _db.reorderNotes([for (final n in reordered) n.id]);
+    } catch (_) {
+      if (mounted) _toast('Could not save the new order.');
+      await _load();
+    }
+  }
+
   Future<void> _edit() async {
     await Navigator.push(
       context,
@@ -399,6 +470,11 @@ class _NotesSheetState extends State<_NotesSheet> {
                     ],
                   ),
                 ),
+                IconButton(
+                  tooltip: 'Add note',
+                  icon: const Icon(Icons.add),
+                  onPressed: _add,
+                ),
                 TextButton.icon(
                   onPressed: _edit,
                   icon: const Icon(Icons.edit_outlined),
@@ -416,31 +492,45 @@ class _NotesSheetState extends State<_NotesSheet> {
                 : notes.isEmpty
                 ? const EmptyState(
                     icon: Icons.sticky_note_2_outlined,
-                    message: 'No notes yet.',
+                    message: 'No notes yet. Tap + to add one.',
                   )
-                : ListView.separated(
+                : ReorderableListView.builder(
                     padding: const EdgeInsets.only(bottom: 24),
+                    buildDefaultDragHandles: false,
                     itemCount: notes.length,
-                    separatorBuilder: (context, index) =>
-                        const Divider(height: 1),
+                    onReorder: _reorder,
                     itemBuilder: (context, index) {
                       final note = notes[index];
-                      return Semantics(
-                        checked: note.isDone,
-                        child: ListTile(
-                          leading: Icon(
-                            note.isDone
-                                ? Icons.check_circle
-                                : Icons.radio_button_unchecked,
-                            color: note.isDone ? scheme.primary : null,
+                      return Column(
+                        key: ValueKey(note.id),
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Semantics(
+                            checked: note.isDone,
+                            child: ListTile(
+                              leading: Icon(
+                                note.isDone
+                                    ? Icons.check_circle
+                                    : Icons.radio_button_unchecked,
+                                color: note.isDone ? scheme.primary : null,
+                              ),
+                              title: Text(
+                                note.text,
+                                style: _noteStyle(context, note),
+                              ),
+                              trailing: ReorderableDragStartListener(
+                                index: index,
+                                child: const Padding(
+                                  padding: EdgeInsets.all(8),
+                                  child: Icon(Icons.drag_handle),
+                                ),
+                              ),
+                              onTap: () => _toggle(index),
+                              onLongPress: () => _copy(note),
+                            ),
                           ),
-                          title: Text(
-                            note.text,
-                            style: _noteStyle(context, note),
-                          ),
-                          onTap: () => _toggle(index),
-                          onLongPress: () => _copy(note),
-                        ),
+                          const Divider(height: 1),
+                        ],
                       );
                     },
                   ),

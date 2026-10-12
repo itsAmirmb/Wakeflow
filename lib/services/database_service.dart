@@ -38,7 +38,7 @@ class DatabaseService {
   }
 
   /// Bump with every schema change (also written into backups).
-  static const int schemaVersion = 20;
+  static const int schemaVersion = 21;
 
   /// Every table that holds user data, in a safe restore order.
   static const List<String> backupTables = [
@@ -288,6 +288,23 @@ class DatabaseService {
         'INTEGER NOT NULL DEFAULT 240',
       );
     }
+    // v20 -> v21: notes have a user-defined order. Existing notes keep the
+    // order they were created in (oldest first, new notes go to the end).
+    // Kept last so the notes table is guaranteed to exist by now.
+    if (oldVersion < 21) {
+      await ensureColumn(
+        db,
+        'category_notes',
+        'position',
+        'INTEGER NOT NULL DEFAULT 0',
+      );
+      await db.execute('''UPDATE category_notes SET position = (
+        SELECT COUNT(*) FROM category_notes n2
+        WHERE n2.categoryId = category_notes.categoryId
+          AND (n2.createdAt < category_notes.createdAt
+            OR (n2.createdAt = category_notes.createdAt
+              AND n2.id < category_notes.id)))''');
+    }
   }
 
   /// Append-only ledger. Earn rows are one per block (unique blockId) and only
@@ -317,7 +334,8 @@ class DatabaseService {
       createdAt TEXT NOT NULL,
       updatedAt TEXT NOT NULL,
       doneAt TEXT,
-      doneDay TEXT
+      doneDay TEXT,
+      position INTEGER NOT NULL DEFAULT 0
     )''');
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_notes_category '
@@ -546,7 +564,8 @@ class DatabaseService {
 
   // ---------- Category notes ----------
 
-  /// Newest first, with ticks that no longer count today shown as open.
+  /// In the user's order (new notes last), with ticks that no longer count
+  /// today shown as open.
   Future<List<CategoryNote>> getNotes(
     String categoryId, {
     required String today,
@@ -557,7 +576,7 @@ class DatabaseService {
       'category_notes',
       where: 'categoryId = ?',
       whereArgs: [categoryId],
-      orderBy: 'createdAt DESC',
+      orderBy: 'position ASC, createdAt ASC, id ASC',
     );
     return [
       for (final row in rows)
@@ -613,6 +632,48 @@ class DatabaseService {
     );
   }
 
+  /// Adds a new note at the end of its category's list.
+  Future<void> addNote(CategoryNote note) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      final rows = await txn.rawQuery(
+        'SELECT MAX(position) AS last FROM category_notes WHERE categoryId = ?',
+        [note.categoryId],
+      );
+      final last = rows.first['last'] as int?;
+      await txn.insert(
+        'category_notes',
+        CategoryNote(
+          id: note.id,
+          categoryId: note.categoryId,
+          text: note.text,
+          createdAt: note.createdAt,
+          updatedAt: note.updatedAt,
+          position: last == null ? 0 : last + 1,
+        ).toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    });
+  }
+
+  /// Saves the new order: [orderedIds] is the whole list of the category's
+  /// note ids, first to last.
+  Future<void> reorderNotes(List<String> orderedIds) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      for (var i = 0; i < orderedIds.length; i++) {
+        await txn.update(
+          'category_notes',
+          {'position': i},
+          where: 'id = ?',
+          whereArgs: [orderedIds[i]],
+        );
+      }
+    });
+  }
+
+  /// Insert-or-replace of an existing note (edit, or undo of a delete, which
+  /// puts it back at its old position).
   Future<void> saveNote(CategoryNote note) async {
     final db = await database;
     await db.insert(
