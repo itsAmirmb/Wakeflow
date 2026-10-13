@@ -212,20 +212,51 @@ class RoutineEngine {
     return result;
   }
 
-  /// Cuts each category's minutes into blocks of its fixed size. A leftover
-  /// shorter than one block is added to the last block; time shorter than
-  /// one block becomes a single short block.
+  /// Cuts each category's minutes into blocks of its fixed size. A small
+  /// leftover joins the last block; a bigger one becomes its own short block
+  /// (see [_blockSizes]). Time shorter than one block becomes a single short
+  /// block.
   static List<Block> splitIntoBlocks({
     required List<Category> categories,
     required Map<String, int> allocation,
   }) => _split(categories, allocation, const {});
 
-  /// Whole blocks of the category's fixed size; always at least one when
-  /// there is time, because a leftover joins the last block.
-  static int _blockCount(Category category, int minutes) {
-    if (minutes <= 0) return 0;
-    return math.max(1, minutes ~/ math.max(1, category.blockMinutes));
+  /// A leftover below this share of the block size joins the last block;
+  /// from this share up it becomes a block of its own.
+  static const double _mergeLeftoverBelow = 0.25;
+
+  /// ...but a leftover shorter than this many minutes never stands alone.
+  static const int _minOwnBlockMinutes = 10;
+
+  /// Block lengths for [minutes] of a category, first to last: as many whole
+  /// blocks of the fixed size as fit, then the leftover. A leftover smaller
+  /// than the larger of [_mergeLeftoverBelow] of a block and
+  /// [_minOwnBlockMinutes] is added to the last block instead of making a
+  /// tiny block; otherwise it is a shorter block of its own, so no block ends
+  /// up much longer than the size the user chose. Less than one block of time
+  /// is a single short block. The sizes always add up to [minutes].
+  static List<int> _blockSizes(Category category, int minutes) {
+    if (minutes <= 0) return const [];
+    final size = math.max(1, category.blockMinutes);
+    final whole = minutes ~/ size;
+    if (whole == 0) return [minutes];
+    final leftover = minutes - whole * size;
+    final sizes = List<int>.filled(whole, size);
+    if (leftover == 0) return sizes;
+    final smallestOwnBlock = math.max(
+      _minOwnBlockMinutes,
+      (size * _mergeLeftoverBelow).ceil(),
+    );
+    if (leftover >= smallestOwnBlock) {
+      sizes.add(leftover);
+    } else {
+      sizes[whole - 1] += leftover;
+    }
+    return sizes;
   }
+
+  static int _blockCount(Category category, int minutes) =>
+      _blockSizes(category, minutes).length;
 
   static List<Block> _split(
     List<Category> categories,
@@ -242,15 +273,8 @@ class RoutineEngine {
     for (final category in categories.where((c) => c.enabled)) {
       final minutes = allocation[category.id] ?? 0;
       if (minutes <= 0) continue;
-      final count = _blockCount(category, minutes);
-      final size = math.max(1, category.blockMinutes);
-      for (var i = 0; i < count; i++) {
-        plan.add((
-          category: category,
-          // Every block is the fixed size; the last one also takes the
-          // leftover (always shorter than one block).
-          minutes: i == count - 1 ? minutes - size * (count - 1) : size,
-        ));
+      for (final blockMinutes in _blockSizes(category, minutes)) {
+        plan.add((category: category, minutes: blockMinutes));
       }
     }
     return plan;

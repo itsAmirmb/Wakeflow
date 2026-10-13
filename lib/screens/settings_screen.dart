@@ -220,6 +220,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// Moves a category and saves the new order. Order is stored as priority
+  /// (1 = first), the same way the Start Day screen does.
+  Future<void> _reorderCategories(int oldIndex, int newIndex) async {
+    final current = _categories;
+    if (!mounted || _saving || current == null) return;
+    if (newIndex > oldIndex) newIndex -= 1;
+    if (newIndex == oldIndex) return;
+    final moved = [...current];
+    moved.insert(newIndex, moved.removeAt(oldIndex));
+    final reordered = [
+      for (var i = 0; i < moved.length; i++) moved[i].copyWith(priority: i + 1),
+    ];
+    final before = {for (final c in current) c.id: c.priority};
+    final changed = reordered.where((c) => before[c.id] != c.priority).toList();
+    setState(() {
+      _saving = true;
+      _categories = reordered;
+    });
+    try {
+      final persist =
+          widget.persistCategory ?? DatabaseService.instance.updateCategory;
+      for (final category in changed) {
+        await persist(category);
+      }
+    } catch (_) {
+      _showError('Could not save the new order. Please try again.');
+      unawaited(_load());
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _editCommitment(Commitment? existing) async {
     if (_saving) return;
     final result = await showCommitmentEditor(context, existing: existing);
@@ -750,15 +782,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onChanged: _saveSplit,
             ),
           ),
-          ...categories.map(
-            (category) => CategoryEditorTile(
-              key: ValueKey(category.id),
-              category: category,
-              onChanged: _saveCategory,
-              onDelete: () => _deleteCategory(category),
-              noteCount: _noteStats[category.id]?.total ?? 0,
-              onNotes: () => _openNotes(category),
-            ),
+          // Drag the handle to reorder; the order is the order of the blocks.
+          ReorderableListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            buildDefaultDragHandles: false,
+            itemCount: categories.length,
+            onReorder: _reorderCategories,
+            itemBuilder: (context, index) {
+              final category = categories[index];
+              return Row(
+                key: ValueKey(category.id),
+                children: [
+                  ReorderableDragStartListener(
+                    index: index,
+                    child: const Padding(
+                      padding: EdgeInsets.fromLTRB(12, 8, 4, 8),
+                      child: Icon(Icons.drag_handle),
+                    ),
+                  ),
+                  Expanded(
+                    child: CategoryEditorTile(
+                      category: category,
+                      onChanged: _saveCategory,
+                      onDelete: () => _deleteCategory(category),
+                      noteCount: _noteStats[category.id]?.total ?? 0,
+                      onNotes: () => _openNotes(category),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
           const BackupSection(),
           const SizedBox(height: 24),

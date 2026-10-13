@@ -2,7 +2,7 @@
 
 > Current-state document. `prop.md` is the original plan and vision; **this file is the truth about what exists now.**
 > Give both to any AI assistant. Where they disagree, this file wins.
-> Last updated at: **v0.14.15** (branch `ling-3.0`; v0.14.12 = commit `964ad7f`).
+> Last updated at: **v0.14.16** (branch `ling-3.0`; v0.14.12 = commit `964ad7f`).
 
 ## 1. What it is
 Flutter/Dart, Android-only, local-first app (renamed from "Smart Routine"). At wake time it works out the day mode, splits the remaining usable time between categories by percentage, and generates blocks that are run with a timer. Unexpected events are handled by recalculating **only the future**; completed history is never rewritten.
@@ -34,6 +34,7 @@ Core principles (unchanged from `prop.md`): Never Zero Day · Past immutable / C
 
 ### Built beyond `prop.md`
 - **Distillation** at a checkpoint: unfinished blocks above a keep-threshold become `partial`, the rest are discarded and re-planned; progress report screen.
+- **Categories**: fresh installs start with a single "Daily Routine" category (existing installs keep theirs); order = `priority`, reorderable by drag in Settings and on Start Day.
 - **Fixed commitments**: weekly or single-date events the planner schedules around (across every calendar day the routine spans, not only its first); weekly schedule view.
 - **Breaks**: short break between blocks, long break after a category finishes.
 - **Credits & rewards**: 10% of timer time becomes credit; spend on "Movie time" (`kRewards`, one entry).
@@ -47,7 +48,7 @@ Core principles (unchanged from `prop.md`): Never Zero Day · Past immutable / C
 ## 4. Architecture map (`lib/`)
 - `models/`: plain data + `toMap/fromMap`. `Block` (status incl. extra `partial`), `Category`, `AppSettings`, `Commitment`, `CheckpointReport`, `ProgressReport`, `Reward`, `TimelineEntry`, `DayMode`.
 - `services/routine_engine.dart` (630 lines), **the core.** Pure static functions, no I/O:
-  `calculateUsableMinutes`, `allocateTime` (weighted water-filling + largest-remainder rounding; min/max per category; emergency compression), `splitIntoBlocks`, `placeOnTimeline` / `generateRoutine` (around commitments + buffers), `distill`, `recalculateFromCheckpoint`.
+  `calculateUsableMinutes`, `allocateTime` (weighted water-filling + largest-remainder rounding; min/max per category; emergency compression), `splitIntoBlocks` (whole blocks of the category's size; a leftover under max(10 min, 25% of a block) joins the last block, otherwise it is its own shorter block), `placeOnTimeline` / `generateRoutine` (around commitments + buffers), `distill`, `recalculateFromCheckpoint`.
 - `services/database_service.dart` (901 lines): all persistence, migrations, settings row.
 - Pure helpers (easy to test): `day_mode_calculator`, `day_timeline`, `checkpoint_gate`, `break_state`, `credit_service`, `active_day`, `day_key`.
 - `notification_service.dart`, `alarm_sound.dart`, `backup_service.dart`, `stats_service.dart`, `history_service.dart`.
