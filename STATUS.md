@@ -2,7 +2,7 @@
 
 > Current-state document. `prop.md` is the original plan and vision; **this file is the truth about what exists now.**
 > Give both to any AI assistant. Where they disagree, this file wins.
-> Last updated at: **v0.14.14** (branch `ling-3.0`; v0.14.12 = commit `964ad7f`).
+> Last updated at: **v0.14.15** (branch `ling-3.0`; v0.14.12 = commit `964ad7f`).
 
 ## 1. What it is
 Flutter/Dart, Android-only, local-first app (renamed from "Smart Routine"). At wake time it works out the day mode, splits the remaining usable time between categories by percentage, and generates blocks that are run with a timer. Unexpected events are handled by recalculating **only the future**; completed history is never rewritten.
@@ -20,7 +20,7 @@ Core principles (unchanged from `prop.md`): Never Zero Day · Past immutable / C
 | Roadmap phase | State |
 |---|---|
 | 0–2 Environment, UI, Wake Check | Done |
-| 3 Day Modes | Done (see known issue #1) |
+| 3 Day Modes | Done; compares real wake-up with the "Wake reminder" setting (target wake time) |
 | 4 Categories | Done + add/remove/reorder/enable, daily max time |
 | 5 Routine Engine | Done (see §4) |
 | 6–7 Timeline, Pause/Resume | Done, timer derived from stored data, survives app restart |
@@ -56,18 +56,16 @@ Core principles (unchanged from `prop.md`): Never Zero Day · Past immutable / C
 Design rules already followed: state that can be derived is **derived, not stored** (break state, checkpoint due, elapsed time); engine takes inputs and returns blocks; DB is the only persistence layer.
 
 ## 5. Known issues / debt
-1. **Target wake time is hardcoded** (`DayModeCalculator.targetWakeHour = 8`, used in `wake_screen.dart`). The code comment says it will move to Settings. Wake-reminder time is already configurable; day mode should follow it or get its own setting.
-2. **Large screens, no state layer.** `today_screen`, `settings_screen`, `database_service` are big and ~100 `setState` calls exist. Fine for now; must be split before Desktop (Phase 13). Prefer a plain `ChangeNotifier` over adding a package.
-3. **Tests:** the project zip shared for review had no `test/` folder (`sqflite_common_ffi` is in dev_dependencies, the v0.5.1 commit mentions engine tests). Confirm engine tests exist and pass; the 10 test cases in `prop.md` §27 should map to real tests.
-4. Android: both `SCHEDULE_EXACT_ALARM` and `USE_EXACT_ALARM` are declared. `USE_EXACT_ALARM` is restricted by Play policy; fine for personal use, review before any store release.
-5. Housekeeping: `pubspec.yaml` description is still the Flutter template text; make sure `android/.gradle/` and `android/local.properties` are git-ignored.
-6. Scope has grown well past the MVP in `prop.md`; each new feature adds maintenance cost.
+1. **Large screens, no state layer.** `today_screen`, `settings_screen`, `database_service` are big and ~100 `setState` calls exist. Fine for now; must be split before Desktop (Phase 13). Prefer a plain `ChangeNotifier` over adding a package.
+2. **Tests:** the project zip shared for review had no `test/` folder (`sqflite_common_ffi` is in dev_dependencies, the v0.5.1 commit mentions engine tests). Confirm engine tests exist and pass; the 10 test cases in `prop.md` §27 should map to real tests.
+3. Android: both `SCHEDULE_EXACT_ALARM` and `USE_EXACT_ALARM` are declared. `USE_EXACT_ALARM` is restricted by Play policy; fine for personal use, review before any store release.
+4. Housekeeping: `pubspec.yaml` description is still the Flutter template text; make sure `android/.gradle/` and `android/local.properties` are git-ignored.
+5. Scope has grown well past the MVP in `prop.md`; each new feature adds maintenance cost.
 
 ## 6. Suggested next steps (in order)
-1. Make the target wake time a Setting; feed it to `DayModeCalculator`.
-2. Verify/restore engine tests; add cases for distill, commitments, credits.
-3. Extract Today-screen logic into a small `ChangeNotifier` and shrink `today_screen`.
-4. Only then: new features, then Desktop.
+1. Verify/restore engine tests; add cases for distill, commitments, credits.
+2. Extract Today-screen logic into a small `ChangeNotifier` and shrink `today_screen`.
+3. Only then: new features, then Desktop.
 
 ## 7. Working rules (for AI assistants)
 - Minimal, targeted changes. No rewrites, no over-engineering, no new dependency without a stated reason.

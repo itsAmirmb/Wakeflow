@@ -459,7 +459,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ).format(context),
               infoTitle: 'Wake reminder',
               info:
-                  'Scheduled for the next occurrence and renewed when you open '
+                  'Your target wake-up time. Waking up much earlier or later '
+                  'than this sets the day mode (early, normal, late, emergency). '
+                  'The reminder is scheduled for the next occurrence and renewed when you open '
                   'the app or change the time. Reopen the app after changing '
                   'time zones. Without exact-alarm access it may arrive late.',
             ),

@@ -1,17 +1,21 @@
 import '../models/day_mode.dart';
 
 class DayModeCalculator {
-  // Hardcoded for now; will move to Settings (user-editable) later.
-  static const targetWakeHour = 8;
-  static const targetWakeMinute = 0;
+  /// Used only when no wake time is passed in (08:00).
+  static const defaultTargetMinutes = 8 * 60;
 
-  static DayMode calculate(DateTime wakeTime) {
+  /// [targetMinutes] is the user's target wake time, in minutes after
+  /// midnight (the "Wake reminder" setting).
+  static DayMode calculate(
+    DateTime wakeTime, {
+    int targetMinutes = defaultTargetMinutes,
+  }) {
     final target = DateTime(
       wakeTime.year,
       wakeTime.month,
       wakeTime.day,
-      targetWakeHour,
-      targetWakeMinute,
+      targetMinutes ~/ 60,
+      targetMinutes % 60,
     );
 
     final diffMinutes = wakeTime.difference(target).inMinutes;

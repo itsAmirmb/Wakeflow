@@ -79,7 +79,20 @@ class _WakeScreenState extends State<WakeScreen> {
     if (_starting) return;
     setState(() => _starting = true);
     final wakeTime = DateTime.now();
-    final mode = DayModeCalculator.calculate(wakeTime);
+    // The day mode compares the real wake-up with the user's target wake time.
+    var targetWakeMinutes = DayModeCalculator.defaultTargetMinutes;
+    try {
+      final settings = await DatabaseService.instance.getSettings();
+      targetWakeMinutes =
+          settings.wakeReminderHour * 60 + settings.wakeReminderMinute;
+    } catch (_) {
+      // Fall back to the default rather than blocking the start of the day.
+    }
+    if (!mounted) return;
+    final mode = DayModeCalculator.calculate(
+      wakeTime,
+      targetMinutes: targetWakeMinutes,
+    );
     unawaited(_saveTarget());
     final target = _target;
 
