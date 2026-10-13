@@ -2,7 +2,7 @@
 
 > Current-state document. `prop.md` is the original plan and vision; **this file is the truth about what exists now.**
 > Give both to any AI assistant. Where they disagree, this file wins.
-> Last updated at: **v0.14.16** (branch `ling-3.0`; v0.14.12 = commit `964ad7f`).
+> Last updated at: **v0.14.18** (branch `ling-3.0`; v0.14.12 = commit `964ad7f`).
 
 ## 1. What it is
 Flutter/Dart, Android-only, local-first app (renamed from "Smart Routine"). At wake time it works out the day mode, splits the remaining usable time between categories by percentage, and generates blocks that are run with a timer. Unexpected events are handled by recalculating **only the future**; completed history is never rewritten.
@@ -33,6 +33,7 @@ Core principles (unchanged from `prop.md`): Never Zero Day · Past immutable / C
 | 14 Sync | **Not started** (intentionally) |
 
 ### Built beyond `prop.md`
+- **Checkpoint review** lists only categories that are due (something planned by now, or time recorded); later ones are hidden.
 - **Distillation** at a checkpoint: unfinished blocks above a keep-threshold become `partial`, the rest are discarded and re-planned; progress report screen.
 - **Categories**: fresh installs start with a single "Daily Routine" category (existing installs keep theirs); order = `priority`, reorderable by drag in Settings and on Start Day.
 - **Fixed commitments**: weekly or single-date events the planner schedules around (across every calendar day the routine spans, not only its first); weekly schedule view.

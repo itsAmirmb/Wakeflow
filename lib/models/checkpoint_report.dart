@@ -38,11 +38,15 @@ class CheckpointReport {
 
   int get remainingMinutes => math.max(0, dayEnd.difference(now).inMinutes);
 
+  /// With [onlyDue], categories that are not part of the review yet are left
+  /// out: nothing of theirs was planned to have happened by [now] and no time
+  /// was recorded on them, so there is nothing to assess.
   factory CheckpointReport.fromBlocks({
     required List<Block> blocks,
     required List<Category> categories,
     required DateTime now,
     required DateTime dayEnd,
+    bool onlyDue = false,
   }) {
     final included = <String, Category>{for (final c in categories) c.id: c};
     // Retain evidence even if its category was subsequently removed.
@@ -68,10 +72,15 @@ class CheckpointReport {
       now: now,
       dayEnd: dayEnd,
       categories: [
-        for (final id in order) _progress(included[id]!, blocks, now),
+        for (final id in order)
+          if (!onlyDue || _isDue(_progress(included[id]!, blocks, now)))
+            _progress(included[id]!, blocks, now),
       ],
     );
   }
+
+  static bool _isDue(CategoryProgress p) =>
+      p.expectedSeconds > 0 || p.actualSeconds > 0;
 
   static CategoryProgress _progress(
     Category category,

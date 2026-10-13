@@ -604,7 +604,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
       final dayEnd = _deadline(meta?.$3);
       final report = CheckpointReport.fromBlocks(blocks: _blocks,
         categories: widget.categories.where((c) => c.enabled).toList(),
-        now: _now, dayEnd: dayEnd);
+        now: _now, dayEnd: dayEnd, onlyDue: true);
       final id = '${widget.day}-${DateTime.now().microsecondsSinceEpoch}';
       DateTime? previewedAt;
       ProgressReport? progress;
