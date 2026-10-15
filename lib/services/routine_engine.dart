@@ -212,47 +212,44 @@ class RoutineEngine {
     return result;
   }
 
-  /// Cuts each category's minutes into blocks of its fixed size. A small
-  /// leftover joins the last block; a bigger one becomes its own short block
-  /// (see [_blockSizes]). Time shorter than one block becomes a single short
-  /// block.
+  /// Cuts each category's minutes into blocks of about its block size: the
+  /// time is split evenly (see [_blockSizes]), so the sizes stay close to the
+  /// chosen one whatever the amount of time.
   static List<Block> splitIntoBlocks({
     required List<Category> categories,
     required Map<String, int> allocation,
   }) => _split(categories, allocation, const {});
 
-  /// A leftover below this share of the block size joins the last block;
-  /// from this share up it becomes a block of its own.
-  static const double _mergeLeftoverBelow = 0.25;
+  /// Block lengths come in whole steps of this many minutes where possible,
+  /// so a routine reads 60, 55, 55 rather than 57, 57, 56.
+  static const int _stepMinutes = 5;
 
-  /// ...but a leftover shorter than this many minutes never stands alone.
-  static const int _minOwnBlockMinutes = 10;
-
-  /// Block lengths for [minutes] of a category, first to last: as many whole
-  /// blocks of the fixed size as fit, then the leftover. A leftover smaller
-  /// than the larger of [_mergeLeftoverBelow] of a block and
-  /// [_minOwnBlockMinutes] is added to the last block instead of making a
-  /// tiny block; otherwise it is a shorter block of its own, so no block ends
-  /// up much longer than the size the user chose. Less than one block of time
-  /// is a single short block. The sizes always add up to [minutes].
+  /// Block lengths for [minutes] of a category, first to last.
+  ///
+  /// The number of blocks is the one whose even split is closest to the
+  /// category's block size (`round(minutes / size)`, at least one), and the
+  /// time is shared out evenly between them. Taking whole blocks and then
+  /// dealing with a leftover (floor division) made the plan jump with every
+  /// minute: 179 min became two blocks, one of 119, and only exactly 180 gave
+  /// the three expected. Splitting evenly changes smoothly instead: each block
+  /// stays within roughly a quarter of the chosen size, 180 -> 60/60/60,
+  /// 170 -> 60/55/55, 130 -> 65/65. Less than about one block of time is a
+  /// single short block. Sizes are multiples of [_stepMinutes] except that the
+  /// last block also takes the few minutes that do not fill a step. The sizes
+  /// always add up to [minutes].
   static List<int> _blockSizes(Category category, int minutes) {
     if (minutes <= 0) return const [];
     final size = math.max(1, category.blockMinutes);
-    final whole = minutes ~/ size;
-    if (whole == 0) return [minutes];
-    final leftover = minutes - whole * size;
-    final sizes = List<int>.filled(whole, size);
-    if (leftover == 0) return sizes;
-    final smallestOwnBlock = math.max(
-      _minOwnBlockMinutes,
-      (size * _mergeLeftoverBelow).ceil(),
-    );
-    if (leftover >= smallestOwnBlock) {
-      sizes.add(leftover);
-    } else {
-      sizes[whole - 1] += leftover;
-    }
-    return sizes;
+    final count = math.max(1, (minutes / size).round());
+    final step = minutes ~/ count >= _stepMinutes ? _stepMinutes : 1;
+    final steps = minutes ~/ step;
+    final rest = minutes - steps * step; // less than one step
+    final each = steps ~/ count;
+    final extra = steps % count; // the first blocks take one step more
+    return [
+      for (var i = 0; i < count; i++)
+        (each + (i < extra ? 1 : 0)) * step + (i == count - 1 ? rest : 0),
+    ];
   }
 
   static int _blockCount(Category category, int minutes) =>

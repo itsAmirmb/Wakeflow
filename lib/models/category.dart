@@ -5,9 +5,9 @@ class Category {
   final double percentage; // 0.0–1.0
   final int minimumMinutes;
 
-  /// Fixed block size. The day's time for this category is cut into blocks
-  /// of this length; the leftover is added to the last block when small,
-  /// otherwise it is one shorter block (see RoutineEngine).
+  /// Target block size. The day's time for this category is split evenly
+  /// into the number of blocks that comes closest to this length (see
+  /// RoutineEngine), so blocks are around this size, not exactly it.
   final int blockMinutes;
   final int priority;
   final bool enabled;

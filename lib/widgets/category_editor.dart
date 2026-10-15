@@ -75,7 +75,7 @@ class CategoryEditorTile extends StatelessWidget {
           ),
         ),
         LabeledSlider(
-          label: 'Block size',
+          label: 'Block size (target)',
           value: category.blockMinutes.toDouble(),
           min: 15,
           max: 180,
