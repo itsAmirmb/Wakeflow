@@ -192,24 +192,35 @@ class _DayModeScreenState extends State<DayModeScreen> {
       ];
     } catch (_) {}
 
-    final placedBlocks = kept.isEmpty
-        ? RoutineEngine.generateRoutine(
-            categories: categories,
-            startTime: wakeTime,
-            dayEnd: dayEnd,
-            bufferMinutes: _bufferMinutes,
-            longBreakMinutes: _longBreakMinutes,
-            busy: busy,
-          )
-        : RoutineEngine.recalculateFromCheckpoint(
-            currentBlocks: kept,
-            categories: categories,
-            now: wakeTime,
-            dayEnd: dayEnd,
-            bufferMinutes: _bufferMinutes,
-            longBreakMinutes: _longBreakMinutes,
-            busy: busy,
-          );
+    final List<Block> placedBlocks;
+    try {
+      placedBlocks = kept.isEmpty
+          ? RoutineEngine.generateRoutine(
+              categories: categories,
+              startTime: wakeTime,
+              dayEnd: dayEnd,
+              bufferMinutes: _bufferMinutes,
+              longBreakMinutes: _longBreakMinutes,
+              busy: busy,
+            )
+          : RoutineEngine.recalculateFromCheckpoint(
+              currentBlocks: kept,
+              categories: categories,
+              now: wakeTime,
+              dayEnd: dayEnd,
+              bufferMinutes: _bufferMinutes,
+              longBreakMinutes: _longBreakMinutes,
+              busy: busy,
+            );
+    } on InvalidRoutineInput catch (error) {
+      // Wrong input is reported, never planned around: the user can fix it.
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Cannot plan the day: ${error.problem}')),
+        );
+      }
+      return;
+    }
 
     // Metadata and blocks are written atomically so a crash can never
     // leave a half-registered day (resume relies on both agreeing).

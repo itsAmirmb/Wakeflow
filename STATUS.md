@@ -2,7 +2,7 @@
 
 > Current-state document. `prop.md` is the original plan and vision; **this file is the truth about what exists now.**
 > Give both to any AI assistant. Where they disagree, this file wins.
-> Last updated at: **v0.14.19** (branch `ling-3.0`; v0.14.12 = commit `964ad7f`).
+> Last updated at: **v0.14.20** (branch `ling-3.0`; v0.14.12 = commit `964ad7f`).
 
 ## 1. What it is
 Flutter/Dart, Android-only, local-first app (renamed from "Smart Routine"). At wake time it works out the day mode, splits the remaining usable time between categories by percentage, and generates blocks that are run with a timer. Unexpected events are handled by recalculating **only the future**; completed history is never rewritten.
@@ -54,6 +54,8 @@ Core principles (unchanged from `prop.md`): Never Zero Day · Past immutable / C
 - Pure helpers (easy to test): `day_mode_calculator`, `day_timeline`, `checkpoint_gate`, `break_state`, `credit_service`, `active_day`, `day_key`.
 - `notification_service.dart`, `alarm_sound.dart`, `backup_service.dart`, `stats_service.dart`, `history_service.dart`.
 - `screens/` + `widgets/`: UI. Largest: `today_screen` (1345), `settings_screen` (1069), `day_timeline_screen` (558), `home_screen` (547).
+
+Engine input guards: public `RoutineEngine` methods throw `InvalidRoutineInput` (an `ArgumentError` with a user-safe `problem` text) for wrong input (negative minutes/gaps, empty or duplicate category ids, negative or non-finite share, block size < 1, fixed event ending before it starts, duplicate block ids). Start Day and the checkpoint preview show that message. A window with no room still returns no blocks (not an error).
 
 Design rules already followed: state that can be derived is **derived, not stored** (break state, checkpoint due, elapsed time); engine takes inputs and returns blocks; DB is the only persistence layer.
 

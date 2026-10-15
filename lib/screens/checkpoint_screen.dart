@@ -89,6 +89,8 @@ class _CheckpointScreenState extends State<CheckpointScreen> {
     try {
       final proposed = List<Block>.unmodifiable(widget.previewFuture());
       setState(() => _proposed = proposed);
+    } on InvalidRoutineInput catch (error) {
+      _showError('Cannot plan the new schedule: ${error.problem}');
     } catch (_) {
       _showError('Could not preview the new plan. Please try again.');
     }
