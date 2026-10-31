@@ -1,6 +1,9 @@
 package org.amirmb.wakeflow
 
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
+import android.os.Build
 import android.content.Intent
 import android.media.MediaPlayer
 import android.media.RingtoneManager
@@ -72,12 +75,32 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /// True when sound would go to headphones / a headset (wired, USB,
+    /// Bluetooth). The ALARM stream ignores them and plays on the speaker.
+    private fun headsetConnected(): Boolean {
+        val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+        return audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
+            when (it.type) {
+                AudioDeviceInfo.TYPE_WIRED_HEADSET,
+                AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+                AudioDeviceInfo.TYPE_USB_HEADSET,
+                AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+                AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+                AudioDeviceInfo.TYPE_HEARING_AID -> true
+                else -> Build.VERSION.SDK_INT >= 31 &&
+                    it.type == AudioDeviceInfo.TYPE_BLE_HEADSET
+            }
+        }
+    }
+
     private fun startPlayer(loop: Boolean, source: MediaPlayer.() -> Unit): Boolean {
         return try {
+            val usage = if (headsetConnected()) AudioAttributes.USAGE_MEDIA
+                else AudioAttributes.USAGE_ALARM
             player = MediaPlayer().apply {
                 setAudioAttributes(
                     AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setUsage(usage)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                         .build()
                 )
@@ -96,7 +119,7 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /// Opens the system alarm-sound picker (the phone's own alarm tones).
+    /// Opens the system sound picker (alarm, notification and ringtone tones).
     private fun pickAlarm(current: String?, result: MethodChannel.Result) {
         if (pendingPick != null) {
             result.error("busy", "Picker already open", null)
@@ -104,10 +127,10 @@ class MainActivity : FlutterActivity() {
         }
         pendingPick = result
         val intent = Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
-            putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_ALARM)
+            putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_ALL)
             putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, false)
             putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
-            putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "Break-end alarm")
+            putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "Choose a tone")
             if (current != null) {
                 putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, Uri.parse(current))
             }

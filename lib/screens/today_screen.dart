@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../models/alert_style.dart';
 import '../models/day_mode.dart';
 import '../models/app_settings.dart';
 import '../models/checkpoint_report.dart';
@@ -282,6 +283,14 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// In-app sound for [event], following the same per-alert settings as its
+  /// notification: off or silent means nothing plays; a chosen tone wins.
+  void _playAlert(AlertEvent event, String sound, {bool loop = false}) {
+    final style = _settings.alertFor(event);
+    if (!style.enabled || style.sound == AlertSound.silent) return;
+    unawaited(AlarmSound.play(sound, loop: loop, uri: style.uri));
+  }
+
   Future<void> _scheduleBreakAlarm(BreakState state) async {
     try {
       if (widget.scheduleBreakAlarm != null) {
@@ -449,12 +458,10 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
         // The in-app alarm replaces the scheduled notification, so the two
         // never ring on top of each other.
         unawaited(_cancelBreakAlarm());
-        unawaited(
-          AlarmSound.play(
-            'confirm_screen',
-            loop: true,
-            uri: _settings.breakAlarmUri,
-          ),
+        _playAlert(
+          AlertEvent.breakEnd,
+          'confirm_screen',
+          loop: _settings.alertFor(AlertEvent.breakEnd).repeat,
         );
       }
       final onBreak = breakState?.isOver(_now) == false;
@@ -495,8 +502,9 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     final firstOfDay = !_blocks.any(
       (b) => b.id != updated.id && b.actualStart != null,
     );
-    unawaited(
-      AlarmSound.play(firstOfDay ? 'session_start' : 'task_start'),
+    _playAlert(
+      AlertEvent.blockStart,
+      firstOfDay ? 'session_start' : 'task_start',
     );
     _persist(updated);
   }
@@ -557,9 +565,12 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
       _startTicking();
       unawaited(_scheduleBreakAlarm(state));
       // Break starts: short or long break sound (the end alarm is separate).
-      unawaited(AlarmSound.play(state.isLong ? 'long_break' : 'short_break'));
+      _playAlert(
+        AlertEvent.blockEnd,
+        state.isLong ? 'long_break' : 'short_break',
+      );
     } else if (!_hasUnfinished) {
-      unawaited(AlarmSound.play('session_complete'));
+      _playAlert(AlertEvent.blockEnd, 'session_complete');
       _cancelCheckpointReminders();
     }
   }
@@ -587,7 +598,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     setState(() => _reviewing = true);
     // A forced checkpoint stops the timer (below) and rings until the user
     // acts on the review screen.
-    if (forced) unawaited(AlarmSound.play('teq_teq'));
+    if (forced) _playAlert(AlertEvent.checkpoint, 'teq_teq');
     try {
       // A forced review freezes a running block first, so what is previewed
       // is exactly what gets saved.

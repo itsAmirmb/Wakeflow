@@ -62,8 +62,17 @@ class AppSettings {
     this.alerts = const {},
   });
 
-  AlertStyle alertFor(AlertEvent event) =>
-      alerts[event] ?? AlertStyle.defaultFor(event);
+  /// The break-end tone used to be a separate setting ([breakAlarmUri]); it
+  /// still applies until a tone is chosen on the alert itself.
+  AlertStyle alertFor(AlertEvent event) {
+    final style = alerts[event] ?? AlertStyle.defaultFor(event);
+    if (event == AlertEvent.breakEnd &&
+        style.uri == null &&
+        breakAlarmUri != null) {
+      return style.copyWith(uri: breakAlarmUri, uriTitle: breakAlarmTitle);
+    }
+    return style;
+  }
 
   AppSettings copyWith({
     int? bufferMinutes,

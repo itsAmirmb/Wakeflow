@@ -167,7 +167,8 @@ class NotificationService {
     final silent = style.sound == AlertSound.silent;
     final loop = style.repeat && !silent;
     return AndroidNotificationDetails(
-      'wf4_${event.name}_${soundUri != null ? 'u${_hash(soundUri)}' : (soundRes ?? style.sound.name)}_${style.vibrate ? 'vib' : 'novib'}',
+      // wf5: usage is part of the channel; old wf4 channels are left unused.
+      'wf5_${event.name}_${soundUri != null ? 'u${_hash(soundUri)}' : (soundRes ?? style.sound.name)}_${style.vibrate ? 'vib' : 'novib'}',
       'WakeFlow: ${event.label}',
       channelDescription: 'Alerts for: ${event.label}',
       importance: silent
@@ -187,9 +188,11 @@ class NotificationService {
               soundRes ?? (alarm ? 'wf_alarm' : 'wf_chime'),
             ),
       enableVibration: style.vibrate,
+      // Alarm stream always plays on the speaker. The default tone uses the
+      // media route so it follows headphones / Bluetooth when connected.
       audioAttributesUsage: alarm
           ? AudioAttributesUsage.alarm
-          : AudioAttributesUsage.notification,
+          : AudioAttributesUsage.media,
       category: alarm
           ? AndroidNotificationCategory.alarm
           : AndroidNotificationCategory.reminder,
@@ -215,6 +218,7 @@ class NotificationService {
     if (event != null) {
       style = await _styleFor(event);
       if (!style.enabled) return;
+      soundUri = style.uri ?? soundUri;
     }
     final android = _android;
     if (await android?.areNotificationsEnabled() == false) {

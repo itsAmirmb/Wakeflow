@@ -2,7 +2,7 @@
 
 > Current-state document. `prop.md` is the original plan and vision; **this file is the truth about what exists now.**
 > Give both to any AI assistant. Where they disagree, this file wins.
-> Last updated at: **v0.14.20** (branch `ling-3.0`; v0.14.12 = commit `964ad7f`).
+> Last updated at: **v0.14.21** (branch `ling-3.0`; v0.14.12 = commit `964ad7f`).
 
 ## 1. What it is
 Flutter/Dart, Android-only, local-first app (renamed from "Smart Routine"). At wake time it works out the day mode, splits the remaining usable time between categories by percentage, and generates blocks that are run with a timer. Unexpected events are handled by recalculating **only the future**; completed history is never rewritten.
@@ -44,7 +44,7 @@ Core principles (unchanged from `prop.md`): Never Zero Day · Past immutable / C
 - **Import/Export backup** (JSON).
 - **Logical day**: a day resets at a configurable time (default 04:00), and an unfinished routine carries over.
 - **Routine target** on the Wake screen: by target end time or by duration.
-- Configurable per-event alert styles and sounds.
+- Per-event alerts (block start, block end, break end, checkpoint, commitment): on/off, default or Alarm or Silent, own tone from the phone, vibrate, repeat. In-app sounds follow the same settings. Default tones use the media route (follow headphones); Alarm style stays on the alarm stream (speaker); in-app sounds switch to media when headphones are connected.
 
 ## 4. Architecture map (`lib/`)
 - `models/`: plain data + `toMap/fromMap`. `Block` (status incl. extra `partial`), `Category`, `AppSettings`, `Commitment`, `CheckpointReport`, `ProgressReport`, `Reward`, `TimelineEntry`, `DayMode`.

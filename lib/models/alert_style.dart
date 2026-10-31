@@ -21,11 +21,17 @@ class AlertStyle {
   final bool vibrate;
   final bool repeat;
 
+  /// Optional tone picked from the phone; overrides [sound]'s bundled tone.
+  final String? uri;
+  final String? uriTitle;
+
   const AlertStyle({
     this.enabled = true,
     this.sound = AlertSound.standard,
     this.vibrate = true,
     this.repeat = false,
+    this.uri,
+    this.uriTitle,
   });
 
   /// The end of a break is the one alert that must not be missed.
@@ -38,11 +44,16 @@ class AlertStyle {
     AlertSound? sound,
     bool? vibrate,
     bool? repeat,
+    String? uri,
+    String? uriTitle,
+    bool clearUri = false,
   }) => AlertStyle(
     enabled: enabled ?? this.enabled,
     sound: sound ?? this.sound,
     vibrate: vibrate ?? this.vibrate,
     repeat: repeat ?? this.repeat,
+    uri: clearUri ? null : (uri ?? this.uri),
+    uriTitle: clearUri ? null : (uriTitle ?? this.uriTitle),
   );
 
   Map<String, Object?> toJson() => {
@@ -50,6 +61,8 @@ class AlertStyle {
     'sound': sound.name,
     'vibrate': vibrate,
     'repeat': repeat,
+    'uri': uri,
+    'uriTitle': uriTitle,
   };
 
   factory AlertStyle.fromJson(Map<String, Object?> json, AlertStyle fallback) =>
@@ -61,5 +74,7 @@ class AlertStyle {
         ),
         vibrate: json['vibrate'] as bool? ?? fallback.vibrate,
         repeat: json['repeat'] as bool? ?? fallback.repeat,
+        uri: json['uri'] as String?,
+        uriTitle: json['uriTitle'] as String?,
       );
 }

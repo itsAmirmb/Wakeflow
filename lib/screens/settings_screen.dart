@@ -611,31 +611,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _settings.copyWith(longBreakMinutes: value.round()),
             ),
           ),
-          ListTile(
-            leading: const Icon(Icons.alarm),
-            title: const Text('Break-end alarm'),
-            subtitle: Text(_settings.breakAlarmTitle ?? 'WakeFlow default'),
-            trailing: _settings.breakAlarmUri == null
-                ? null
-                : IconButton(
-                    tooltip: 'Use default',
-                    icon: const Icon(Icons.restart_alt),
-                    onPressed: () =>
-                        _saveSettings(_settings.copyWith(clearBreakAlarm: true)),
-                  ),
-            onTap: () async {
-              final picked = await AlarmSound.pickAlarm(
-                current: _settings.breakAlarmUri,
-              );
-              if (picked == null || !mounted) return;
-              await _saveSettings(
-                _settings.copyWith(
-                  breakAlarmUri: picked.uri,
-                  breakAlarmTitle: picked.title,
-                ),
-              );
-            },
-          ),
           _SectionHeader(
             'Checkpoints',
             trailing: Row(
@@ -763,7 +738,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
               event: event,
               style: _settings.alertFor(event),
               onChanged: (style) => _saveSettings(
-                _settings.copyWith(alerts: {..._settings.alerts, event: style}),
+                _settings.copyWith(
+                  alerts: {..._settings.alerts, event: style},
+                  // The old standalone break-end tone now lives on the alert.
+                  clearBreakAlarm: event == AlertEvent.breakEnd,
+                ),
               ),
             ),
           _SectionHeader(
@@ -1106,6 +1085,27 @@ class _AlertTile extends StatelessWidget {
             onSelectionChanged: (selection) =>
                 onChanged(style.copyWith(sound: selection.first)),
           ),
+        ),
+        ListTile(
+          enabled: !silent,
+          title: const Text('Tone'),
+          subtitle: Text(style.uriTitle ?? 'WakeFlow default'),
+          trailing: style.uri == null
+              ? null
+              : IconButton(
+                  tooltip: 'Use default',
+                  icon: const Icon(Icons.restart_alt),
+                  onPressed: () => onChanged(style.copyWith(clearUri: true)),
+                ),
+          onTap: silent
+              ? null
+              : () async {
+                  final picked = await AlarmSound.pickAlarm(current: style.uri);
+                  if (picked == null) return;
+                  onChanged(
+                    style.copyWith(uri: picked.uri, uriTitle: picked.title),
+                  );
+                },
         ),
         SwitchListTile(
           title: const Text('Vibrate'),
